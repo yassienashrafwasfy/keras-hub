@@ -294,22 +294,16 @@ class BLIP2CustomOPT(keras.Model):
         self.language_projection = language_projection
 
     def call_with_cache(self, x, padding_mask, cache, cache_update_index):
-        new_cache = cache
+        updated_caches = []
         for i, layer in enumerate(self.transformer_layers):
-            x, updated_layer_cache = layer(
+            x, new_layer_cache = layer(
                 x,
                 padding_mask=padding_mask,
                 cache=cache[:, i],
                 cache_update_index=cache_update_index,
             )
-            new_cache = ops.slice_update(
-                new_cache,
-                [0, i, 0, 0, 0, 0],
-                ops.cast(
-                    ops.expand_dims(updated_layer_cache, axis=1),
-                    new_cache.dtype,
-                ),
-            )
+            updated_caches.append(new_layer_cache)
+        new_cache = ops.stack(updated_caches, axis=1)
         x = self.layer_norm(x)
         return x, new_cache
 
