@@ -110,8 +110,8 @@ class CachedOPTAttention(keras.layers.Layer):
         v = self._split_heads(self.v_proj(x))
 
         if cache is not None:
-            k_for_cache = ops.transpose(k, (0, 2, 1, 3))
-            v_for_cache = ops.transpose(v, (0, 2, 1, 3))
+            k_for_cache = ops.cast(ops.transpose(k, (0, 2, 1, 3)), cache.dtype)  
+            v_for_cache = ops.cast(ops.transpose(v, (0, 2, 1, 3)), cache.dtype)  
             k_cache = ops.slice_update(
                 cache[:, 0], [0, cache_update_index, 0, 0], k_for_cache
             )
@@ -119,8 +119,9 @@ class CachedOPTAttention(keras.layers.Layer):
                 cache[:, 1], [0, cache_update_index, 0, 0], v_for_cache
             )
             new_cache = ops.stack([k_cache, v_cache], axis=1)
-            k = ops.transpose(k_cache, (0, 2, 1, 3))
-            v = ops.transpose(v_cache, (0, 2, 1, 3))
+            # read back in original compute dtype for the attention matmul
+            k = ops.cast(ops.transpose(k_cache, (0, 2, 1, 3)), x.dtype)
+            v = ops.cast(ops.transpose(v_cache, (0, 2, 1, 3)), x.dtype)
         else:
             new_cache = None
 
