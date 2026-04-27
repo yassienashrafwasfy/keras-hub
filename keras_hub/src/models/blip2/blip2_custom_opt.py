@@ -305,7 +305,10 @@ class BLIP2CustomOPT(keras.Model):
             new_cache = ops.slice_update(
                 new_cache,
                 [0, i, 0, 0, 0, 0],
-                ops.expand_dims(updated_layer_cache, axis=1),
+                ops.cast(
+                    ops.expand_dims(updated_layer_cache, axis=1),
+                    new_cache.dtype,
+                ),
             )
         x = self.layer_norm(x)
         return x, new_cache

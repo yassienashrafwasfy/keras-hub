@@ -60,6 +60,9 @@ class CachedOPTAttention(keras.layers.Layer):
             self.attn_dropout = keras.layers.Dropout(
                 dropout, dtype=self.dtype_policy, name="attn_dropout"
             )
+        self.softmax = keras.layers.Softmax(
+            axis=-1, dtype="float32", name="softmax"
+        )
 
     def _split_heads(self, x):
         """``(B, T, D)`` -> ``(B, H, T, head_dim)``."""
@@ -110,8 +113,8 @@ class CachedOPTAttention(keras.layers.Layer):
         v = self._split_heads(self.v_proj(x))
 
         if cache is not None:
-            k_for_cache = ops.cast(ops.transpose(k, (0, 2, 1, 3)), cache.dtype)  
-            v_for_cache = ops.cast(ops.transpose(v, (0, 2, 1, 3)), cache.dtype)  
+            k_for_cache = ops.cast(ops.transpose(k, (0, 2, 1, 3)), cache.dtype)
+            v_for_cache = ops.cast(ops.transpose(v, (0, 2, 1, 3)), cache.dtype)
             k_cache = ops.slice_update(
                 cache[:, 0], [0, cache_update_index, 0, 0], k_for_cache
             )
@@ -129,12 +132,9 @@ class CachedOPTAttention(keras.layers.Layer):
             ops.matmul(q, ops.transpose(k, (0, 1, 3, 2))) * self._scale
         )
 
-        if attention_mask is not None:
-            attn_weights = attn_weights + ops.cast(
-                attention_mask, attn_weights.dtype
-            )
+        attn_weights = self.softmax(attn_weights, mask=attention_mask)
+        attn_weights = ops.cast(attn_weights, x.dtype)
 
-        attn_weights = ops.softmax(attn_weights, axis=-1)
         if self.dropout_rate > 0:
             attn_weights = self.attn_dropout(attn_weights, training=training)
 
@@ -243,8 +243,7 @@ class OPTDecoderBlock(keras.layers.Layer):
         else:
             bool_mask = causal_mask
 
-        bool_mask = ops.expand_dims(bool_mask, axis=1)
-        return ops.cast(ops.logical_not(bool_mask), x.dtype) * -1e4
+        return ops.expand_dims(bool_mask, axis=1)
 
     def compute_output_spec(
         self,
