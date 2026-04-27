@@ -26,6 +26,7 @@ class CachedOPTAttention(keras.layers.Layer):
         self.hidden_dim = hidden_dim
         self.head_dim = hidden_dim // num_heads
         self.dropout_rate = dropout
+        self._scale = self.head_dim**-0.5
 
         self.q_proj = keras.layers.EinsumDense(
             equation="btd,df->btf",
@@ -62,7 +63,9 @@ class CachedOPTAttention(keras.layers.Layer):
 
     def _split_heads(self, x):
         """``(B, T, D)`` -> ``(B, H, T, head_dim)``."""
-        b, t = ops.shape(x)[0], ops.shape(x)[1]
+        # Single ops.shape call — avoids two separate shape inference ops.
+        shape = ops.shape(x)
+        b, t = shape[0], shape[1]
         return ops.transpose(
             ops.reshape(x, (b, t, self.num_heads, self.head_dim)),
             (0, 2, 1, 3),
@@ -70,15 +73,14 @@ class CachedOPTAttention(keras.layers.Layer):
 
     def _merge_heads(self, x):
         """``(B, H, T, head_dim)`` -> ``(B, T, D)``."""
-        b, t = ops.shape(x)[0], ops.shape(x)[2]
+        # Single ops.shape call — avoids two separate shape inference ops.
+        shape = ops.shape(x)
+        b, t = shape[0], shape[2]
         return ops.reshape(
             ops.transpose(x, (0, 2, 1, 3)),
             (b, t, self.hidden_dim),
         )
 
-    # ── FIX: Keras cannot infer output shape when call() has a conditional
-    #         return (tensor vs tuple). compute_output_spec() short-circuits
-    #         symbolic tracing so variables are never double-initialized.
     def compute_output_spec(
         self,
         x,
@@ -87,10 +89,8 @@ class CachedOPTAttention(keras.layers.Layer):
         cache_update_index=0,
         training=None,
     ):
-        # Output always mirrors input shape (B, T, hidden_dim)
         output = keras.KerasTensor(x.shape, dtype=x.dtype)
 
-        # Use explicit None check — KerasTensor truthiness is unreliable
         if cache is not None:
             new_cache = keras.KerasTensor(cache.shape, dtype=cache.dtype)
             return output, new_cache
@@ -124,8 +124,9 @@ class CachedOPTAttention(keras.layers.Layer):
         else:
             new_cache = None
 
-        scale = ops.cast(self.head_dim, q.dtype) ** -0.5
-        attn_weights = ops.matmul(q, ops.transpose(k, (0, 1, 3, 2))) * scale
+        attn_weights = (
+            ops.matmul(q, ops.transpose(k, (0, 1, 3, 2))) * self._scale
+        )
 
         if attention_mask is not None:
             attn_weights = attn_weights + ops.cast(
@@ -207,8 +208,11 @@ class OPTDecoderBlock(keras.layers.Layer):
             name="fc2",
         )
         if dropout > 0:
-            self.residual_dropout = keras.layers.Dropout(
-                dropout, dtype=self.dtype_policy, name="residual_dropout"
+            self.attn_residual_dropout = keras.layers.Dropout(
+                dropout, dtype=self.dtype_policy, name="attn_residual_dropout"
+            )
+            self.ffn_residual_dropout = keras.layers.Dropout(
+                dropout, dtype=self.dtype_policy, name="ffn_residual_dropout"
             )
 
     def _compute_attention_mask(
@@ -239,12 +243,8 @@ class OPTDecoderBlock(keras.layers.Layer):
             bool_mask = causal_mask
 
         bool_mask = ops.expand_dims(bool_mask, axis=1)
-        return ops.cast(ops.logical_not(bool_mask), x.dtype) * -1e9
+        return ops.cast(ops.logical_not(bool_mask), x.dtype) * -1e4
 
-    # ── FIX: Same conditional-return problem as CachedOPTAttention.
-    #         Declaring compute_output_spec() prevents Keras from re-tracing
-    #         call() symbolically after variables are already initialized,
-    #         which is what caused "Variable ... is already initialized".
     def compute_output_spec(
         self,
         x,
@@ -253,10 +253,8 @@ class OPTDecoderBlock(keras.layers.Layer):
         cache_update_index=0,
         training=None,
     ):
-        # Output shape always matches input shape (B, T, hidden_dim)
         output = keras.KerasTensor(x.shape, dtype=x.dtype)
 
-        # Explicit None check — never rely on KerasTensor truthiness
         if cache is not None:
             new_cache = keras.KerasTensor(cache.shape, dtype=cache.dtype)
             return output, new_cache
@@ -291,7 +289,7 @@ class OPTDecoderBlock(keras.layers.Layer):
             )
             new_cache = None
         if self.dropout_rate > 0:
-            x = self.residual_dropout(x, training=training)
+            x = self.attn_residual_dropout(x, training=training)
         x = residual + ops.cast(x, residual.dtype)
 
         residual = x
@@ -300,7 +298,7 @@ class OPTDecoderBlock(keras.layers.Layer):
         x = keras.activations.relu(x)
         x = self.fc2(x)
         if self.dropout_rate > 0:
-            x = self.residual_dropout(x, training=training)
+            x = self.ffn_residual_dropout(x, training=training)
         x = residual + ops.cast(x, residual.dtype)
 
         if cache is not None:

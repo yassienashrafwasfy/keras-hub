@@ -90,11 +90,19 @@ class BLIP2Backbone(Backbone):
 
         # === Vision branch (optional) ===
         if multimodal:
-            image_size = self.vision_encoder.image_size
+            raw_image_size = self.vision_encoder.image_size
+            if isinstance(raw_image_size, (tuple, list)):
+                image_h, image_w = (
+                    int(raw_image_size[0]),
+                    int(raw_image_size[1]),
+                )
+            else:
+                image_h = image_w = int(raw_image_size)
+
             images_input = keras.Input(
-                shape=(image_size, image_size, 3),
+                shape=(image_h, image_w, 3),
                 dtype="float32",
-                name="pixel_values",
+                name="images",
             )
             inputs["images"] = images_input
 

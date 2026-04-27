@@ -66,7 +66,41 @@ class BLIP2OPTEmbeddings(keras.layers.Layer):
     def build(self, input_shape):
         self.token_embedding.build(input_shape)
         self.position_embedding.build((None, None))
+        self._position_ids = ops.expand_dims(
+            ops.arange(
+                self.position_offset,
+                self.position_offset + self.max_sequence_length,
+                dtype="int32",
+            ),
+            axis=0,
+        )
         self.built = True
+
+    def compute_output_spec(
+        self,
+        token_ids,
+        position_ids=None,
+        visual_position_ids=None,
+        training=None,
+    ):
+        batch_size = token_ids.shape[0]
+        seq_len = token_ids.shape[1]
+
+        text_out = keras.KerasTensor(
+            shape=(batch_size, seq_len, self.hidden_dim),
+            dtype=self.compute_dtype,
+        )
+
+        if visual_position_ids is not None:
+            # visual_position_ids shape: (1, num_query_tokens)
+            num_vis = visual_position_ids.shape[1]
+            vis_out = keras.KerasTensor(
+                shape=(batch_size, num_vis, self.hidden_dim),
+                dtype=self.compute_dtype,
+            )
+            return text_out, vis_out
+
+        return text_out
 
     def call(
         self,
@@ -78,14 +112,8 @@ class BLIP2OPTEmbeddings(keras.layers.Layer):
         token_embeds = self.token_embedding(token_ids, training=training)
         if position_ids is None:
             seq_len = ops.shape(token_ids)[-1]
-            position_ids = ops.expand_dims(
-                ops.arange(
-                    self.position_offset,
-                    self.position_offset + seq_len,
-                    dtype="int32",
-                ),
-                axis=0,
-            )
+            # Slice the precomputed buffer — no arange allocation per call.
+            position_ids = self._position_ids[:, :seq_len]
         pos_embeds = self.position_embedding(position_ids)
         text_out = token_embeds + ops.cast(pos_embeds, token_embeds.dtype)
 
@@ -266,17 +294,19 @@ class BLIP2CustomOPT(keras.Model):
         self.language_projection = language_projection
 
     def call_with_cache(self, x, padding_mask, cache, cache_update_index):
-        updated_caches = []
+        new_cache = cache
         for i, layer in enumerate(self.transformer_layers):
-            per_layer_cache = cache[:, i]
-            x, new_layer_cache = layer(
+            x, updated_layer_cache = layer(
                 x,
                 padding_mask=padding_mask,
-                cache=per_layer_cache,
+                cache=cache[:, i],
                 cache_update_index=cache_update_index,
             )
-            updated_caches.append(new_layer_cache)
-        new_cache = ops.stack(updated_caches, axis=1)
+            new_cache = ops.slice_update(
+                new_cache,
+                [0, i, 0, 0, 0, 0],
+                ops.expand_dims(updated_layer_cache, axis=1),
+            )
         x = self.layer_norm(x)
         return x, new_cache
 

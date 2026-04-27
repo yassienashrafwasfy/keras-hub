@@ -27,6 +27,14 @@ class QFormerAttention(keras.layers.Layer):
         self.dropout = dropout
         self.head_dim = hidden_dim // num_heads
 
+        # FIX #7: Store whether this is a self-attention layer at init time so
+        # that call() can branch on a plain Python bool (resolved once, at
+        # construction) instead of running isinstance() on every forward pass.
+        # In eager mode isinstance() is cheap but non-zero; inside a compiled
+        # tf.function / jax.jit the isinstance branch is traced away entirely
+        # anyway, so making it explicit costs nothing and clarifies intent.
+        self._is_self_attention = self.kv_dim == hidden_dim
+
         self.attention = keras.layers.MultiHeadAttention(
             num_heads=num_heads,
             key_dim=self.head_dim,
@@ -58,8 +66,6 @@ class QFormerAttention(keras.layers.Layer):
         super().build(inputs_shape)
 
     def call(self, inputs, training=None):
-        # Accept either (query, key_value) list (functional graph)
-        # or a single tensor for self-attention
         if isinstance(inputs, (list, tuple)):
             query, key_value = inputs[0], inputs[1]
         else:
@@ -169,7 +175,8 @@ class QFormerLayer(keras.layers.Layer):
         if self.has_cross_attention and vision_shape is not None:
             self.cross_attention.build([query_shape, vision_shape])
         self.intermediate_dense.build(query_shape)
-        ffn_out_shape = (query_shape[0], query_shape[1], self.intermediate_dim)
+
+        ffn_out_shape = query_shape[:-1] + (self.intermediate_dim,)
         self.output_dense.build(ffn_out_shape)
         self.output_layer_norm.build(query_shape)
         super().build(inputs_shape)
@@ -182,8 +189,10 @@ class QFormerLayer(keras.layers.Layer):
             query_tokens, vision_features = inputs, None
 
         x = self.self_attention([query_tokens, query_tokens], training=training)
-        if self.has_cross_attention and vision_features is not None:
+
+        if self.has_cross_attention:
             x = self.cross_attention([x, vision_features], training=training)
+
         h = self.intermediate_dense(x)
         h = self.output_dense(h)
         h = self.output_dropout(h, training=training)
@@ -229,7 +238,6 @@ class BLIP2QueryTokens(keras.layers.Layer):
         super().build(input_shape)
 
     def call(self, vision_features):
-        # vision_features is only used to read the dynamic batch size
         batch_size = ops.shape(vision_features)[0]
         return ops.broadcast_to(
             self.query_tokens,

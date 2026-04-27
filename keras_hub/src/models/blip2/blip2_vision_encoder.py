@@ -69,16 +69,18 @@ class BLIP2VisionEncoder(keras.Model):
         dtype=None,
         **kwargs,
     ):
-        h, w = (
+        image_size = (
             (image_size, image_size)
             if isinstance(image_size, int)
             else image_size
         )
-        ph, pw = (
+        patch_size = (
             (patch_size, patch_size)
             if isinstance(patch_size, int)
             else patch_size
         )
+        h, w = image_size
+        ph, pw = patch_size
         # === Functional graph ===
         image_input = keras.Input(shape=(h, w, 3), name="images")
 
@@ -128,20 +130,11 @@ class BLIP2VisionEncoder(keras.Model):
         self.layer_norm_epsilon = layer_norm_epsilon
         self.initializer_range = initializer_range
         # works for both square and non-square
-        image_size = (
-            (image_size, image_size)
-            if isinstance(image_size, int)
-            else image_size
+        self.image_size = image_size
+        self.patch_size = patch_size
+        self.num_vision_tokens_per_image = ((h // ph) * (w // pw)) + (
+            1 if use_class_token else 0
         )
-        patch_size = (
-            (patch_size, patch_size)
-            if isinstance(patch_size, int)
-            else patch_size
-        )
-
-        self.num_vision_tokens_per_image = (
-            (image_size[0] // patch_size[0]) * (image_size[1] // patch_size[1])
-        ) + (1 if use_class_token else 0)
 
     def get_config(self):
         config = super().get_config()
