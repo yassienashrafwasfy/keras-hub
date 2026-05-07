@@ -66,6 +66,14 @@ class BLIP2CausalLM(CausalLM):
             **kwargs,
         )
 
+        # Freeze vision encoder and qformer — only QFormer is trained in BLIP-2.
+        # This stops Keras from storing their intermediate activations for
+        # backprop, which is the primary cause of excessive CPU RAM usage.
+        if self.backbone.vision_encoder is not None:
+            self.backbone.vision_encoder.trainable = False
+        if self.backbone.qformer is not None:
+            self.backbone.qformer.trainable = False
+
     def compile(
         self,
         optimizer="auto",
@@ -194,6 +202,10 @@ class BLIP2CausalLM(CausalLM):
         num_visual = self.backbone.num_query_tokens
         batch_size = ops.shape(token_ids)[0]
         text_length = ops.shape(token_ids)[1]
+        # BLIP-2 prepends num_visual tokens before text, unlike Gemma3 which
+        # interleaves into existing token positions. The transformer sees
+        # num_visual + text_length tokens during prefill, so the cache must
+        # cover both.
         max_length = text_length + num_visual
 
         cache_shape = [
@@ -222,7 +234,17 @@ class BLIP2CausalLM(CausalLM):
         images = inputs.get("images")
         num_visual = self.backbone.num_query_tokens
 
-        if images is not None:
+        # Static shape check — returns a Python int, not a tensor. This avoids
+        # XLA allocating worst-case buffers for both vision and text-only paths.
+        num_images = 0
+        if (
+            images is not None
+            and hasattr(images, "shape")
+            and len(images.shape) > 1
+        ):
+            num_images = images.shape[1]
+
+        if num_images:
             projected_features = self._encode_images(images)
         else:
             projected_features = None
