@@ -71,8 +71,8 @@ class BLIP2CausalLM(CausalLM):
         # backprop, which is the primary cause of excessive CPU RAM usage.
         if self.backbone.vision_encoder is not None:
             self.backbone.vision_encoder.trainable = False
-        if self.backbone.qformer is not None:
-            self.backbone.qformer.trainable = False
+        if self.backbone.language_model is not None:
+            self.backbone.language_model.trainable = False
 
     def compile(
         self,
