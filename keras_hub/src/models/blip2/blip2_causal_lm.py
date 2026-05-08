@@ -52,20 +52,16 @@ class BLIP2CausalLM(CausalLM):
         # === Layers ===
         self.preprocessor = preprocessor
         self.backbone = backbone
-        
-        
-        if self.backbone.vision_encoder is not None:
-            self.backbone.vision_encoder.trainable = False
-        if self.backbone.language_model is not None:
-            self.backbone.language_model.trainable = False
-
 
         # === Functional Model ===
         inputs = backbone.input
-        hidden_states = backbone(inputs)
+        hidden_states = backbone.output
         outputs = backbone.token_embedding(hidden_states, reverse=True)
         # Sliced outputs to match text-only labels.
+        # We start at num_query_tokens - 1 because the prediction for the first
+        # text token is produced by the last query token.
         outputs = outputs[:, backbone.num_query_tokens :, :]
+        # outputs = outputs[:, backbone.num_query_tokens - 1 : -1, :]
 
         super().__init__(
             inputs=inputs,
