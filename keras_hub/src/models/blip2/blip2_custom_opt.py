@@ -250,6 +250,7 @@ class BLIP2CustomOPT(keras.Model):
             projected_qf = projected_qf + vis_pos_embeds
 
             x = ops.concatenate([projected_qf, x], axis=1)
+            x = ops.stop_gradient(x)
 
             vis_mask = ops.cast(
                 ops.ones_like(qformer_features_input[..., 0]), "bool"
