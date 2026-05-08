@@ -66,9 +66,6 @@ class BLIP2CausalLM(CausalLM):
             **kwargs,
         )
 
-        # Freeze vision encoder and qformer — only QFormer is trained in BLIP-2.
-        # This stops Keras from storing their intermediate activations for
-        # backprop, which is the primary cause of excessive CPU RAM usage.
         if self.backbone.vision_encoder is not None:
             self.backbone.vision_encoder.trainable = False
         if self.backbone.language_model is not None:
