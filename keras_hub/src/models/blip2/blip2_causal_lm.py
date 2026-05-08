@@ -52,6 +52,13 @@ class BLIP2CausalLM(CausalLM):
         # === Layers ===
         self.preprocessor = preprocessor
         self.backbone = backbone
+        
+        
+        if self.backbone.vision_encoder is not None:
+            self.backbone.vision_encoder.trainable = False
+        if self.backbone.language_model is not None:
+            self.backbone.language_model.trainable = False
+
 
         # === Functional Model ===
         inputs = backbone.input
@@ -65,11 +72,6 @@ class BLIP2CausalLM(CausalLM):
             outputs=outputs,
             **kwargs,
         )
-
-        if self.backbone.vision_encoder is not None:
-            self.backbone.vision_encoder.trainable = False
-        if self.backbone.language_model is not None:
-            self.backbone.language_model.trainable = False
 
     def compile(
         self,
