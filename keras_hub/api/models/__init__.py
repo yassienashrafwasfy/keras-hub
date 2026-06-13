@@ -785,6 +785,15 @@ from keras_hub.src.models.smollm3.smollm3_tokenizer import (
 from keras_hub.src.models.smollm3.smollm3_tokenizer import (
     SmolLM3Tokenizer as SmolLMTokenizer,
 )
+from keras_hub.src.models.stable_diffusion_1_4.stable_diffusion_1_4_backbone import (
+    StableDiffusion1_4Backbone as StableDiffusion1_4Backbone,
+)
+from keras_hub.src.models.stable_diffusion_1_4.stable_diffusion_1_4_text_to_image import (
+    StableDiffusion1_4TextToImage as StableDiffusion1_4TextToImage,
+)
+from keras_hub.src.models.stable_diffusion_1_4.stable_diffusion_1_4_text_to_image_preprocessor import (
+    StableDiffusion1_4TextToImagePreprocessor as StableDiffusion1_4TextToImagePreprocessor,
+)
 from keras_hub.src.models.stable_diffusion_3.stable_diffusion_3_backbone import (
     StableDiffusion3Backbone as StableDiffusion3Backbone,
 )
