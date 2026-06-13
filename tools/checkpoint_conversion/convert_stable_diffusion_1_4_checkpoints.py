@@ -1,8 +1,5 @@
 """Convert Stable Diffusion v1.4 checkpoints.
 
-export KAGGLE_USERNAME=XXX
-export KAGGLE_KEY=XXX
-
 python tools/checkpoint_conversion/convert_stable_diffusion_1_4_checkpoints.py \
     --preset stable_diffusion_1_4 \
     --upload_uri kaggle://kerashub/stablediffusion1.4/keras/stable_diffusion_1_4
@@ -312,28 +309,36 @@ def convert_weights(preset, keras_model):
 
     def port_vae_attention(loader, attn, prefix):
         port_ln_or_gn(loader, attn.group_norm, f"{prefix}.group_norm")
-        # diffusers stores these as 2D linear weights; reshape to 1x1 conv.
-        to_conv = lambda x, _: x[:, :, None, None].transpose(2, 3, 1, 0)
-        loader.port_weight(
-            attn.query_conv2d.kernel, f"{prefix}.to_q.weight", hook_fn=to_conv
-        )
-        loader.port_weight(attn.query_conv2d.bias, f"{prefix}.to_q.bias")
-        loader.port_weight(
-            attn.key_conv2d.kernel, f"{prefix}.to_k.weight", hook_fn=to_conv
-        )
-        loader.port_weight(attn.key_conv2d.bias, f"{prefix}.to_k.bias")
-        loader.port_weight(
-            attn.value_conv2d.kernel, f"{prefix}.to_v.weight", hook_fn=to_conv
-        )
-        loader.port_weight(attn.value_conv2d.bias, f"{prefix}.to_v.bias")
-        loader.port_weight(
-            attn.output_conv2d.kernel,
-            f"{prefix}.to_out.0.weight",
-            hook_fn=to_conv,
-        )
-        loader.port_weight(
-            attn.output_conv2d.bias, f"{prefix}.to_out.0.bias"
-        )
+        # CompVis SD1.4 was saved with the legacy `AttentionBlock` key names;
+        # newer diffusers re-saves use `to_q`/`to_k`/`to_v`/`to_out.0`.
+        try:
+            loader.get_tensor(f"{prefix}.to_q.weight")
+            q_key, k_key, v_key, out_key = "to_q", "to_k", "to_v", "to_out.0"
+        except Exception:
+            q_key, k_key, v_key, out_key = (
+                "query",
+                "key",
+                "value",
+                "proj_attn",
+            )
+
+        # The projections are stored as 2D linear weights (or, in some
+        # checkpoints, as 1x1 convs); reshape either to a keras 1x1 conv kernel.
+        def to_conv(x, _):
+            if x.ndim == 2:
+                x = x[:, :, None, None]
+            return x.transpose(2, 3, 1, 0)
+
+        for keras_conv, hf_key in (
+            (attn.query_conv2d, q_key),
+            (attn.key_conv2d, k_key),
+            (attn.value_conv2d, v_key),
+            (attn.output_conv2d, out_key),
+        ):
+            loader.port_weight(
+                keras_conv.kernel, f"{prefix}.{hf_key}.weight", hook_fn=to_conv
+            )
+            loader.port_weight(keras_conv.bias, f"{prefix}.{hf_key}.bias")
 
     def port_vae(preset_root, filename, model):
         with SafetensorLoader(preset_root, prefix="", fname=filename) as loader:
