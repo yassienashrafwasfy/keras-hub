@@ -435,6 +435,10 @@ def convert_weights(preset, keras_model):
 
 
 def validate_output(preset, keras_model, keras_preprocessor, output_dir):
+    # Inference only: disable autograd so the multi-step keras generation does
+    # not build a graph through the UNet for every diffusion step (OOM).
+    torch.set_grad_enabled(False)
+
     config = PRESET_MAP[preset]
     dtype = config["dtype"]
     prompt = "A cat holding a sign that says hello world"
@@ -603,6 +607,8 @@ def main(_):
     os.makedirs(output_dir, exist_ok=True)
 
     print(f"🏃 Converting {preset}")
+    # Conversion is inference only; never accumulate autograd state.
+    torch.set_grad_enabled(False)
     keras.config.set_dtype_policy(PRESET_MAP[preset]["dtype"])
     height, width = 512, 512
 
