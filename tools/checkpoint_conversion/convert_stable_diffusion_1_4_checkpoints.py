@@ -426,13 +426,14 @@ def convert_weights(preset, keras_model):
             )
             blocks_idx = 0
             upsamples_idx = 0
-            n = len(decoder.stackwise_num_filters) - 1
+            # Unlike the CompVis single-file layout, diffusers numbers the
+            # decoder `up_blocks` in the same order as the keras decoder stacks.
             for i, _ in enumerate(decoder.stackwise_num_filters):
                 for j in range(decoder.stackwise_num_blocks[i]):
                     port_vae_resnet(
                         loader,
                         decoder.blocks[blocks_idx],
-                        f"decoder.up_blocks.{n - i}.resnets.{j}",
+                        f"decoder.up_blocks.{i}.resnets.{j}",
                     )
                     blocks_idx += 1
                 if i != len(decoder.stackwise_num_filters) - 1:
@@ -440,7 +441,7 @@ def convert_weights(preset, keras_model):
                     port_conv2d(
                         loader,
                         decoder.upsamples[upsamples_idx + 1],
-                        f"decoder.up_blocks.{n - i}.upsamplers.0.conv",
+                        f"decoder.up_blocks.{i}.upsamplers.0.conv",
                     )
                     upsamples_idx += 2
             port_ln_or_gn(loader, decoder.output_norm, "decoder.conv_norm_out")
@@ -504,13 +505,14 @@ def validate_output(preset, keras_model, keras_preprocessor, output_dir):
     diff = np.abs(keras_embeddings - hf_embeddings)
     print("🔶 Text embeddings diff (mean/max):", diff.mean(), diff.max())
 
-    # VAE round trip.
+    # VAE round trip. The VAE expects images normalized to `[-1, 1]`; feed the
+    # same normalized input to both models.
     np.random.seed(0)
-    images = np.random.rand(1, 512, 512, 3).astype("float32")
+    images = np.random.rand(1, 512, 512, 3).astype("float32") * 2.0 - 1.0
     keras_latents = text_to_image.backbone.encode_image_step(images)
     keras_decoded = text_to_image.backbone.decode_step(keras_latents)
     with torch.inference_mode():
-        hf_in = torch.from_numpy(images.transpose(0, 3, 1, 2) * 2.0 - 1.0)
+        hf_in = torch.from_numpy(images.transpose(0, 3, 1, 2))
         hf_latents = (
             pipeline.vae.encode(hf_in.to(torch_dtype)).latent_dist.mode()
             * pipeline.vae.config.scaling_factor
