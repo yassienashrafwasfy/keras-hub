@@ -525,6 +525,16 @@ class DownBlock2D(layers.Layer):
         )
         return config
 
+    def compute_output_shape(
+        self, inputs_shape, time_emb_shape, context_shape=None
+    ):
+        # Spatial dims are dynamic (`None`); only the channel count is fixed.
+        output_shape = tuple(inputs_shape[:-1]) + (self.filters,)
+        states_shape = [output_shape] * self.num_layers
+        if self.add_downsample:
+            states_shape.append(output_shape)
+        return output_shape, states_shape
+
 
 class MidBlock2D(layers.Layer):
     """The middle block: ResNet, cross-attention, ResNet."""
@@ -652,6 +662,16 @@ class UpBlock2D(layers.Layer):
             }
         )
         return config
+
+    def compute_output_shape(
+        self,
+        inputs_shape,
+        time_emb_shape,
+        res_samples_shape,
+        context_shape=None,
+    ):
+        # Spatial dims are dynamic (`None`); only the channel count is fixed.
+        return tuple(inputs_shape[:-1]) + (self.filters,)
 
 
 class UNet(Backbone):
