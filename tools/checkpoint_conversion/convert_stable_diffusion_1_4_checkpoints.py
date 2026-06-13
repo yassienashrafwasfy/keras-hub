@@ -14,15 +14,18 @@ os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
 
 import gc  # noqa: E402
 import shutil  # noqa: E402
-import sys  # noqa: E402
 
 import keras  # noqa: E402
 import numpy as np  # noqa: E402
 import torch  # noqa: E402
 from absl import app  # noqa: E402
 from absl import flags  # noqa: E402
+from diffusers import AutoencoderKL  # noqa: E402
+from diffusers import DPMSolverMultistepScheduler  # noqa: E402
 from diffusers import StableDiffusionPipeline  # noqa: E402
+from diffusers import UNet2DConditionModel  # noqa: E402
 from PIL import Image  # noqa: E402
+from transformers import CLIPTextModel  # noqa: E402
 
 import keras_hub  # noqa: E402
 from keras_hub.src.models.clip.clip_preprocessor import (  # noqa: E402
@@ -438,7 +441,7 @@ def convert_weights(preset, keras_model):
 
 def validate_output(preset, keras_model, keras_preprocessor, output_dir):
     # Inference only: disable autograd so the multi-step keras generation does
-    # not build a graph through the UNet for every diffusion step (OOM).
+    # not build a graph through the UNet for every diffusion step.
     torch.set_grad_enabled(False)
 
     config = PRESET_MAP[preset]
@@ -446,44 +449,34 @@ def validate_output(preset, keras_model, keras_preprocessor, output_dir):
     prompt = "A cat holding a sign that says hello world"
     num_steps = 25
     guidance_scale = 7.5
-
     torch_dtype = {
         "float16": torch.float16,
         "bfloat16": torch.bfloat16,
     }.get(dtype, torch.float32)
     hf_repo_id = config["root"].replace("hf://", "", 1)
-    print("🔶 Loading diffusers pipeline...", flush=True)
-    pipeline = StableDiffusionPipeline.from_pretrained(
-        hf_repo_id, torch_dtype=torch_dtype, safety_checker=None
-    )
+
     text_to_image = StableDiffusion1_4TextToImage(
         keras_model, keras_preprocessor
     )
-
-    # Parameter count.
-    hf_params = (
-        sum(p.numel() for p in pipeline.unet.parameters())
-        + sum(p.numel() for p in pipeline.vae.parameters())
-        + sum(p.numel() for p in pipeline.text_encoder.parameters())
-    )
-    print("🔶 Keras params:", keras_model.count_params())
-    print("🔶 HF params:   ", hf_params)
-
-    # Text encoder.
     token_ids = text_to_image.preprocessor.generate_preprocess([prompt])
-    with torch.inference_mode():
-        hf_text_input = pipeline.tokenizer(
-            prompt,
-            padding="max_length",
-            max_length=77,
-            truncation=True,
-            return_tensors="pt",
-        )
-        hf_embeddings = (
-            pipeline.text_encoder(hf_text_input.input_ids)[0]
-            .to(torch.float32)
-            .numpy()
-        )
+
+    # Each HF component is loaded, compared, then freed before the next, so the
+    # keras model and a full HF model are never resident at the same time.
+    hf_param_count = 0
+
+    # === Text encoder. Feed identical token ids to both to isolate it. ===
+    token_ids_np = keras.ops.convert_to_numpy(token_ids).astype("int64")
+    hf_text_encoder = CLIPTextModel.from_pretrained(
+        hf_repo_id, subfolder="text_encoder", torch_dtype=torch_dtype
+    )
+    hf_param_count += sum(p.numel() for p in hf_text_encoder.parameters())
+    hf_embeddings = (
+        hf_text_encoder(torch.from_numpy(token_ids_np))[0]
+        .to(torch.float32)
+        .numpy()
+    )
+    del hf_text_encoder
+    gc.collect()
     keras_embeddings, _ = text_to_image.backbone.encode_text_step(
         token_ids, token_ids
     )
@@ -493,24 +486,28 @@ def validate_output(preset, keras_model, keras_preprocessor, output_dir):
     diff = np.abs(keras_embeddings - hf_embeddings)
     print("🔶 Text embeddings diff (mean/max):", diff.mean(), diff.max())
 
-    # UNet noise prediction. Feed identical latents, timestep and text
-    # embeddings to both UNets so the diff isolates the denoiser.
+    # === UNet. Feed identical latent, timestep and embeddings to both. ===
     np.random.seed(1)
     latent = np.random.randn(1, 4, 64, 64).astype("float32")
     timestep = 500
-    with torch.inference_mode():
-        hf_eps = (
-            pipeline.unet(
-                torch.from_numpy(latent).to(torch_dtype),
-                torch.tensor(timestep),
-                encoder_hidden_states=torch.from_numpy(hf_embeddings).to(
-                    torch_dtype
-                ),
-            )
-            .sample.to(torch.float32)
-            .numpy()
-            .transpose(0, 2, 3, 1)
+    hf_unet = UNet2DConditionModel.from_pretrained(
+        hf_repo_id, subfolder="unet", torch_dtype=torch_dtype
+    )
+    hf_param_count += sum(p.numel() for p in hf_unet.parameters())
+    hf_eps = (
+        hf_unet(
+            torch.from_numpy(latent).to(torch_dtype),
+            torch.tensor(timestep),
+            encoder_hidden_states=torch.from_numpy(hf_embeddings).to(
+                torch_dtype
+            ),
         )
+        .sample.to(torch.float32)
+        .numpy()
+        .transpose(0, 2, 3, 1)
+    )
+    del hf_unet
+    gc.collect()
     keras_eps = text_to_image.backbone.diffuser(
         {
             "latent": keras.ops.convert_to_tensor(latent.transpose(0, 2, 3, 1)),
@@ -518,70 +515,67 @@ def validate_output(preset, keras_model, keras_preprocessor, output_dir):
             "context": keras.ops.convert_to_tensor(hf_embeddings),
         }
     )
-    keras_eps = keras.ops.convert_to_numpy(
-        keras.ops.cast(keras_eps, "float32")
-    )
+    keras_eps = keras.ops.convert_to_numpy(keras.ops.cast(keras_eps, "float32"))
     unet_diff = np.abs(keras_eps - hf_eps)
     print("🔶 UNet eps diff (mean/max):", unet_diff.mean(), unet_diff.max())
 
-    # VAE round trip. The VAE expects images normalized to `[-1, 1]`; feed the
-    # same normalized input to both models.
+    # === VAE round trip. The VAE expects images normalized to [-1, 1]. ===
     np.random.seed(0)
     images = np.random.rand(1, 512, 512, 3).astype("float32") * 2.0 - 1.0
     keras_latents = text_to_image.backbone.encode_image_step(images)
     keras_decoded = text_to_image.backbone.decode_step(keras_latents)
-    with torch.inference_mode():
-        hf_in = torch.from_numpy(images.transpose(0, 3, 1, 2))
-        hf_latents = (
-            pipeline.vae.encode(hf_in.to(torch_dtype)).latent_dist.mode()
-            * pipeline.vae.config.scaling_factor
-        )
-        hf_decoded = pipeline.vae.decode(
-            hf_latents / pipeline.vae.config.scaling_factor
-        ).sample
-    hf_decoded = hf_decoded.to(torch.float32).numpy().transpose(0, 2, 3, 1)
+    hf_vae = AutoencoderKL.from_pretrained(
+        hf_repo_id, subfolder="vae", torch_dtype=torch_dtype
+    )
+    hf_param_count += sum(p.numel() for p in hf_vae.parameters())
+    hf_in = torch.from_numpy(images.transpose(0, 3, 1, 2)).to(torch_dtype)
+    hf_latents = (
+        hf_vae.encode(hf_in).latent_dist.mode() * hf_vae.config.scaling_factor
+    )
+    hf_decoded = (
+        hf_vae.decode(hf_latents / hf_vae.config.scaling_factor)
+        .sample.to(torch.float32)
+        .numpy()
+        .transpose(0, 2, 3, 1)
+    )
+    del hf_vae
+    gc.collect()
     vae_diff = np.abs(
-        keras.ops.convert_to_numpy(
-            keras.ops.cast(keras_decoded, "float32")
-        )
+        keras.ops.convert_to_numpy(keras.ops.cast(keras_decoded, "float32"))
         - hf_decoded
     )
     print("🔶 VAE decode diff (mean/max):", vae_diff.mean(), vae_diff.max())
 
-    # Generate an image from both models using identical initial latents, so
-    # the comparison reflects model fidelity rather than RNG differences.
-    from diffusers import DPMSolverMultistepScheduler
+    # === Parameter count. ===
+    print("🔶 Keras params:", keras_model.count_params())
+    print("🔶 HF params:   ", hf_param_count)
 
+    # === End-to-end image from identical initial latents. ===
+    # The full pipeline is freed before the keras generation so both full
+    # models are never resident together.
+    pipeline = StableDiffusionPipeline.from_pretrained(
+        hf_repo_id, torch_dtype=torch_dtype, safety_checker=None
+    )
     pipeline.scheduler = DPMSolverMultistepScheduler.from_config(
         pipeline.scheduler.config,
         algorithm_type="dpmsolver++",
         solver_order=2,
         use_karras_sigmas=True,
     )
-
     np.random.seed(42)
-    # diffusers latents are channels-first; keras latents are channels-last.
     init_latents = np.random.randn(1, 4, 64, 64).astype("float32")
-
-    print("🔶 Generating diffusers image...", flush=True)
-    with torch.inference_mode():
-        hf_image = pipeline(
-            prompt,
-            num_inference_steps=num_steps,
-            guidance_scale=guidance_scale,
-            latents=torch.from_numpy(init_latents).to(torch_dtype),
-            output_type="np",
-        ).images[0]
+    hf_image = pipeline(
+        prompt,
+        num_inference_steps=num_steps,
+        guidance_scale=guidance_scale,
+        latents=torch.from_numpy(init_latents).to(torch_dtype),
+        output_type="np",
+    ).images[0]
     hf_image = (hf_image * 255).round().astype("uint8")
-
-    # Free the diffusers pipeline before running keras generation so the two
-    # full models are never resident at the same time.
     del pipeline
     gc.collect()
 
-    print("🔶 Generating keras image...", flush=True)
     text_to_image.backbone.configure_scheduler(num_steps)
-    token_ids = text_to_image.preprocessor.generate_preprocess([prompt])
     negative_token_ids = text_to_image.preprocessor.generate_preprocess([""])
     keras_decoded = text_to_image.generate_step(
         keras.ops.convert_to_tensor(init_latents.transpose(0, 2, 3, 1)),
@@ -592,13 +586,14 @@ def validate_output(preset, keras_model, keras_preprocessor, output_dir):
     keras_image = keras.ops.convert_to_numpy(
         keras.ops.cast(
             keras.ops.clip(
-                (keras.ops.cast(keras_decoded, "float32") + 1.0) / 2.0, 0.0, 1.0
+                (keras.ops.cast(keras_decoded, "float32") + 1.0) / 2.0,
+                0.0,
+                1.0,
             )
             * 255.0,
             "uint8",
         )
     )[0]
-
     image_diff = np.abs(
         keras_image.astype("float32") - hf_image.astype("float32")
     )
@@ -615,11 +610,6 @@ def main(_):
         shutil.rmtree(preset)
     os.makedirs(preset, exist_ok=True)
     os.makedirs(output_dir, exist_ok=True)
-
-    # Unbuffered output so progress is visible even if the process is killed
-    # (e.g. by an OOM) before the buffer is flushed.
-    sys.stdout.reconfigure(line_buffering=True)
-    sys.stderr.reconfigure(line_buffering=True)
 
     print(f"🏃 Converting {preset}")
     # Conversion is inference only; never accumulate autograd state.
