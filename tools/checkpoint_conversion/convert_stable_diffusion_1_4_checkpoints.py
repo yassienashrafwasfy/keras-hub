@@ -7,10 +7,8 @@ python tools/checkpoint_conversion/convert_stable_diffusion_1_4_checkpoints.py \
 
 import os
 
-# Run the conversion on CPU with the torch backend. These must be set before
-# `keras` is imported.
+# Use the torch backend for conversion. Must be set before `keras` is imported.
 os.environ["KERAS_BACKEND"] = "torch"
-os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
 
 import gc  # noqa: E402
 import shutil  # noqa: E402
