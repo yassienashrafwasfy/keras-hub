@@ -189,6 +189,15 @@ class StableDiffusion1_4Backbone(Backbone):
             dtype=dtype,
             name="latent_rescaling",
         )
+        # 1x1 convs that map between the VAE moments/latent and the diffusion
+        # latent, matching diffusers' `AutoencoderKL.quant_conv` and
+        # `post_quant_conv`.
+        self.quant_conv = layers.Conv2D(
+            2 * int(latent_channels), 1, dtype=dtype, name="quant_conv"
+        )
+        self.post_quant_conv = layers.Conv2D(
+            int(latent_channels), 1, dtype=dtype, name="post_quant_conv"
+        )
 
         # === Functional Model ===
         image_input = keras.Input(shape=image_shape, name="images")
@@ -254,7 +263,10 @@ class StableDiffusion1_4Backbone(Backbone):
         return encode(token_ids), encode(negative_token_ids)
 
     def encode_image_step(self, images):
-        latents = self.vae.encode(images)
+        # `quant_conv` acts on the moments, before the gaussian sampler.
+        moments = self.vae.encoder(images)
+        moments = self.quant_conv(moments)
+        latents = self.vae.distribution_sampler(moments)
         return self.image_rescaling(latents)
 
     def configure_scheduler(self, num_steps):
@@ -302,7 +314,8 @@ class StableDiffusion1_4Backbone(Backbone):
 
     def decode_step(self, latents):
         latents = self.latent_rescaling(latents)
-        return self.vae.decode(latents, training=False)
+        latents = self.post_quant_conv(latents)
+        return self.vae.decoder(latents, training=False)
 
     def get_config(self):
         config = super().get_config()

@@ -6,32 +6,44 @@ python tools/checkpoint_conversion/convert_stable_diffusion_1_4_checkpoints.py \
 """
 
 import os
-import shutil
 
-import keras
-import numpy as np
-import torch
-from absl import app
-from absl import flags
-from diffusers import StableDiffusionPipeline
-from PIL import Image
+# Run the conversion on CPU with the torch backend. These must be set before
+# `keras` is imported.
+os.environ["KERAS_BACKEND"] = "torch"
+os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
 
-import keras_hub
-from keras_hub.src.models.clip.clip_preprocessor import CLIPPreprocessor
-from keras_hub.src.models.clip.clip_text_encoder import CLIPTextEncoder
-from keras_hub.src.models.clip.clip_tokenizer import CLIPTokenizer
-from keras_hub.src.models.stable_diffusion_1_4.stable_diffusion_1_4_backbone import (  # noqa: E501
+import shutil  # noqa: E402
+
+import keras  # noqa: E402
+import numpy as np  # noqa: E402
+import torch  # noqa: E402
+from absl import app  # noqa: E402
+from absl import flags  # noqa: E402
+from diffusers import StableDiffusionPipeline  # noqa: E402
+from PIL import Image  # noqa: E402
+
+import keras_hub  # noqa: E402
+from keras_hub.src.models.clip.clip_preprocessor import (  # noqa: E402
+    CLIPPreprocessor,
+)
+from keras_hub.src.models.clip.clip_text_encoder import (  # noqa: E402
+    CLIPTextEncoder,
+)
+from keras_hub.src.models.clip.clip_tokenizer import CLIPTokenizer  # noqa: E402
+from keras_hub.src.models.stable_diffusion_1_4.stable_diffusion_1_4_backbone import (  # noqa: E402, E501
     StableDiffusion1_4Backbone,
 )
-from keras_hub.src.models.stable_diffusion_1_4.stable_diffusion_1_4_text_to_image import (  # noqa: E501
+from keras_hub.src.models.stable_diffusion_1_4.stable_diffusion_1_4_text_to_image import (  # noqa: E402, E501
     StableDiffusion1_4TextToImage,
 )
-from keras_hub.src.models.stable_diffusion_1_4.stable_diffusion_1_4_text_to_image_preprocessor import (  # noqa: E501
+from keras_hub.src.models.stable_diffusion_1_4.stable_diffusion_1_4_text_to_image_preprocessor import (  # noqa: E402, E501
     StableDiffusion1_4TextToImagePreprocessor,
 )
-from keras_hub.src.models.vae.vae_backbone import VAEBackbone
-from keras_hub.src.utils.preset_utils import load_json
-from keras_hub.src.utils.transformers.safetensor_utils import SafetensorLoader
+from keras_hub.src.models.vae.vae_backbone import VAEBackbone  # noqa: E402
+from keras_hub.src.utils.preset_utils import load_json  # noqa: E402
+from keras_hub.src.utils.transformers.safetensor_utils import (  # noqa: E402
+    SafetensorLoader,
+)
 
 FLAGS = flags.FLAGS
 
@@ -373,48 +385,11 @@ def convert_weights(preset, keras_model):
                 loader, encoder.mid_block_1, "encoder.mid_block.resnets.1"
             )
             port_ln_or_gn(loader, encoder.output_norm, "encoder.conv_norm_out")
-            # Fold `quant_conv` (1x1, applied AFTER `conv_out`) into the encoder
-            # output projection. Exact: a 1x1 conv after a 3x3 conv composes
-            # cleanly into the 3x3 weights and bias.
-            qw = loader.get_tensor("quant_conv.weight")[:, :, 0, 0]  # [8, 8]
-            qb = loader.get_tensor("quant_conv.bias")  # [8]
-            loader.port_weight(
-                encoder.output_projection.kernel,
-                "encoder.conv_out.weight",
-                hook_fn=lambda w, _: np.transpose(
-                    np.einsum("oc,cijk->oijk", qw, w), (2, 3, 1, 0)
-                ),
-            )
-            loader.port_weight(
-                encoder.output_projection.bias,
-                "encoder.conv_out.bias",
-                hook_fn=lambda b, _: np.einsum("oc,c->o", qw, b) + qb,
-            )
+            port_conv2d(loader, encoder.output_projection, "encoder.conv_out")
 
             # Decoder.
             decoder = model.decoder
-            # Fold `post_quant_conv` (1x1, applied BEFORE `conv_in`) into the
-            # decoder input projection. The weight fold is exact; the bias fold
-            # is exact in the interior but approximate on the 1-pixel latent
-            # border (the padded 3x3 conv of a constant bias field is not
-            # spatially constant at the edges).
-            pw = loader.get_tensor("post_quant_conv.weight")[:, :, 0, 0]  # [4,4]
-            pb = loader.get_tensor("post_quant_conv.bias")  # [4]
-            loader.port_weight(
-                decoder.input_projection.kernel,
-                "decoder.conv_in.weight",
-                hook_fn=lambda w, _: np.transpose(
-                    np.einsum("ocjk,ci->oijk", w, pw), (2, 3, 1, 0)
-                ),
-            )
-            loader.port_weight(
-                decoder.input_projection.bias,
-                "decoder.conv_in.bias",
-                hook_fn=lambda b, _: b
-                + np.einsum("ocjk,c->o", loader.get_tensor(
-                    "decoder.conv_in.weight"
-                ), pb),
-            )
+            port_conv2d(loader, decoder.input_projection, "decoder.conv_in")
             port_vae_resnet(
                 loader, decoder.mid_block_0, "decoder.mid_block.resnets.0"
             )
@@ -451,6 +426,12 @@ def convert_weights(preset, keras_model):
     port_clip(config["root"], config["clip"], keras_model.clip)
     port_unet(config["root"], config["unet"], keras_model.diffuser)
     port_vae(config["root"], config["vae"], keras_model.vae)
+    # `quant_conv` / `post_quant_conv` live on the backbone, not the VAE.
+    with SafetensorLoader(
+        config["root"], prefix="", fname=config["vae"]
+    ) as loader:
+        port_conv2d(loader, keras_model.quant_conv, "quant_conv")
+        port_conv2d(loader, keras_model.post_quant_conv, "post_quant_conv")
 
 
 def validate_output(preset, keras_model, keras_preprocessor, output_dir):
@@ -505,6 +486,37 @@ def validate_output(preset, keras_model, keras_preprocessor, output_dir):
     diff = np.abs(keras_embeddings - hf_embeddings)
     print("🔶 Text embeddings diff (mean/max):", diff.mean(), diff.max())
 
+    # UNet noise prediction. Feed identical latents, timestep and text
+    # embeddings to both UNets so the diff isolates the denoiser.
+    np.random.seed(1)
+    latent = np.random.randn(1, 4, 64, 64).astype("float32")
+    timestep = 500
+    with torch.inference_mode():
+        hf_eps = (
+            pipeline.unet(
+                torch.from_numpy(latent).to(torch_dtype),
+                torch.tensor(timestep),
+                encoder_hidden_states=torch.from_numpy(hf_embeddings).to(
+                    torch_dtype
+                ),
+            )
+            .sample.to(torch.float32)
+            .numpy()
+            .transpose(0, 2, 3, 1)
+        )
+    keras_eps = text_to_image.backbone.diffuser(
+        {
+            "latent": keras.ops.convert_to_tensor(latent.transpose(0, 2, 3, 1)),
+            "timestep": keras.ops.convert_to_tensor([float(timestep)]),
+            "context": keras.ops.convert_to_tensor(hf_embeddings),
+        }
+    )
+    keras_eps = keras.ops.convert_to_numpy(
+        keras.ops.cast(keras_eps, "float32")
+    )
+    unet_diff = np.abs(keras_eps - hf_eps)
+    print("🔶 UNet eps diff (mean/max):", unet_diff.mean(), unet_diff.max())
+
     # VAE round trip. The VAE expects images normalized to `[-1, 1]`; feed the
     # same normalized input to both models.
     np.random.seed(0)
@@ -529,11 +541,57 @@ def validate_output(preset, keras_model, keras_preprocessor, output_dir):
     )
     print("🔶 VAE decode diff (mean/max):", vae_diff.mean(), vae_diff.max())
 
-    # Generate an image.
-    image = text_to_image.generate(
-        prompt, num_steps=num_steps, guidance_scale=guidance_scale, seed=42
+    # Generate an image from both models using identical initial latents, so
+    # the comparison reflects model fidelity rather than RNG differences.
+    from diffusers import DPMSolverMultistepScheduler
+
+    pipeline.scheduler = DPMSolverMultistepScheduler.from_config(
+        pipeline.scheduler.config,
+        algorithm_type="dpmsolver++",
+        solver_order=2,
+        use_karras_sigmas=True,
     )
-    Image.fromarray(image).save(os.path.join(output_dir, f"{preset}.png"))
+
+    np.random.seed(42)
+    # diffusers latents are channels-first; keras latents are channels-last.
+    init_latents = np.random.randn(1, 4, 64, 64).astype("float32")
+
+    with torch.inference_mode():
+        hf_image = pipeline(
+            prompt,
+            num_inference_steps=num_steps,
+            guidance_scale=guidance_scale,
+            latents=torch.from_numpy(init_latents).to(torch_dtype),
+            output_type="np",
+        ).images[0]
+    hf_image = (hf_image * 255).round().astype("uint8")
+
+    text_to_image.backbone.configure_scheduler(num_steps)
+    token_ids = text_to_image.preprocessor.generate_preprocess([prompt])
+    negative_token_ids = text_to_image.preprocessor.generate_preprocess([""])
+    keras_decoded = text_to_image.generate_step(
+        keras.ops.convert_to_tensor(init_latents.transpose(0, 2, 3, 1)),
+        (token_ids, negative_token_ids),
+        num_steps,
+        keras.ops.convert_to_tensor(float(guidance_scale)),
+    )
+    keras_image = keras.ops.convert_to_numpy(
+        keras.ops.cast(
+            keras.ops.clip(
+                (keras.ops.cast(keras_decoded, "float32") + 1.0) / 2.0, 0.0, 1.0
+            )
+            * 255.0,
+            "uint8",
+        )
+    )[0]
+
+    image_diff = np.abs(
+        keras_image.astype("float32") - hf_image.astype("float32")
+    )
+    print("🔶 Image diff (mean/max):", image_diff.mean(), image_diff.max())
+    # Save the two images side by side (keras | diffusers).
+    combined = np.concatenate([keras_image, hf_image], axis=1)
+    Image.fromarray(combined).save(os.path.join(output_dir, f"{preset}.png"))
 
 
 def main(_):
