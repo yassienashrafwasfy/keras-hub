@@ -12,7 +12,9 @@ import os
 os.environ["KERAS_BACKEND"] = "torch"
 os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
 
+import gc  # noqa: E402
 import shutil  # noqa: E402
+import sys  # noqa: E402
 
 import keras  # noqa: E402
 import numpy as np  # noqa: E402
@@ -450,6 +452,7 @@ def validate_output(preset, keras_model, keras_preprocessor, output_dir):
         "bfloat16": torch.bfloat16,
     }.get(dtype, torch.float32)
     hf_repo_id = config["root"].replace("hf://", "", 1)
+    print("🔶 Loading diffusers pipeline...", flush=True)
     pipeline = StableDiffusionPipeline.from_pretrained(
         hf_repo_id, torch_dtype=torch_dtype, safety_checker=None
     )
@@ -560,6 +563,7 @@ def validate_output(preset, keras_model, keras_preprocessor, output_dir):
     # diffusers latents are channels-first; keras latents are channels-last.
     init_latents = np.random.randn(1, 4, 64, 64).astype("float32")
 
+    print("🔶 Generating diffusers image...", flush=True)
     with torch.inference_mode():
         hf_image = pipeline(
             prompt,
@@ -570,6 +574,12 @@ def validate_output(preset, keras_model, keras_preprocessor, output_dir):
         ).images[0]
     hf_image = (hf_image * 255).round().astype("uint8")
 
+    # Free the diffusers pipeline before running keras generation so the two
+    # full models are never resident at the same time.
+    del pipeline
+    gc.collect()
+
+    print("🔶 Generating keras image...", flush=True)
     text_to_image.backbone.configure_scheduler(num_steps)
     token_ids = text_to_image.preprocessor.generate_preprocess([prompt])
     negative_token_ids = text_to_image.preprocessor.generate_preprocess([""])
@@ -605,6 +615,11 @@ def main(_):
         shutil.rmtree(preset)
     os.makedirs(preset, exist_ok=True)
     os.makedirs(output_dir, exist_ok=True)
+
+    # Unbuffered output so progress is visible even if the process is killed
+    # (e.g. by an OOM) before the buffer is flushed.
+    sys.stdout.reconfigure(line_buffering=True)
+    sys.stderr.reconfigure(line_buffering=True)
 
     print(f"🏃 Converting {preset}")
     # Conversion is inference only; never accumulate autograd state.
