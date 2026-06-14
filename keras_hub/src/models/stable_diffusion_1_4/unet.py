@@ -6,6 +6,7 @@ from keras import ops
 
 from keras_hub.src.models.backbone import Backbone
 from keras_hub.src.utils.keras_utils import fused_attention_op_available
+from keras_hub.src.utils.keras_utils import running_on_tpu
 from keras_hub.src.utils.keras_utils import standardize_data_format
 
 
@@ -120,7 +121,11 @@ class CrossAttention(layers.Layer):
 
     def _compute_attention(self, query, key, value):
         batch_size = ops.shape(query)[0]
-        if fused_attention_op_available():
+        # `jax.nn.dot_product_attention` mis-handles the scale on TPU (the
+        # softmax collapses and attention returns ~unscaled values), which
+        # corrupts every attention block and yields noise images. Use the
+        # manual einsum+softmax path on TPU instead.
+        if fused_attention_op_available() and not running_on_tpu():
             encoded = ops.dot_product_attention(
                 query, key, value, scale=self._inverse_sqrt_head_dim
             )
