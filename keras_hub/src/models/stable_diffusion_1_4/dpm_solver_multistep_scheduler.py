@@ -73,6 +73,9 @@ class DPMSolverMultistepScheduler(layers.Layer):
             ** 2
         )
         alphas_cumprod = ops.cumprod(ops.subtract(1.0, betas))
+        # Keep the cumulative product for the training forward process
+        # (`add_noise`); inference only needs the derived sigmas below.
+        self.alphas_cumprod = alphas_cumprod
         # `sigma` here is the k-diffusion noise level: `sqrt((1 - a) / a)`.
         train_sigmas = ops.sqrt(
             ops.divide(ops.subtract(1.0, alphas_cumprod), alphas_cumprod)
@@ -196,6 +199,43 @@ class DPMSolverMultistepScheduler(layers.Layer):
             ops.equal(step, self.num_inference_steps - 1),
         )
         return ops.where(lower_order, first_order, second_order)
+
+    def add_noise(self, original_samples, noise, timesteps):
+        """Apply the forward diffusion process `q(x_t | x_0)` for training.
+
+        Returns
+        `sqrt(alphas_cumprod[t]) * original_samples
+        + sqrt(1 - alphas_cumprod[t]) * noise`, the standard DDPM noising used
+        to train the epsilon-prediction UNet. This is independent of the
+        inference timesteps configured by `set_timesteps`.
+
+        Args:
+            original_samples: The clean latents, shape `(batch, ...)`.
+            noise: Noise to add, same shape as `original_samples`.
+            timesteps: Integer training timesteps, shape `(batch,)`, in
+                `[0, num_train_timesteps)`.
+
+        Returns:
+            The noised latents, same shape as `original_samples`.
+        """
+        timesteps = ops.cast(timesteps, "int32")
+        alpha_prod = ops.take(self.alphas_cumprod, timesteps)
+        sqrt_alpha_prod = ops.sqrt(alpha_prod)
+        sqrt_one_minus_alpha_prod = ops.sqrt(ops.subtract(1.0, alpha_prod))
+        # Right-broadcast the per-sample scalars to the rank of the samples.
+        for _ in range(len(original_samples.shape) - 1):
+            sqrt_alpha_prod = ops.expand_dims(sqrt_alpha_prod, -1)
+            sqrt_one_minus_alpha_prod = ops.expand_dims(
+                sqrt_one_minus_alpha_prod, -1
+            )
+        sqrt_alpha_prod = ops.cast(sqrt_alpha_prod, original_samples.dtype)
+        sqrt_one_minus_alpha_prod = ops.cast(
+            sqrt_one_minus_alpha_prod, original_samples.dtype
+        )
+        return ops.add(
+            ops.multiply(sqrt_alpha_prod, original_samples),
+            ops.multiply(sqrt_one_minus_alpha_prod, noise),
+        )
 
     def get_config(self):
         config = super().get_config()
