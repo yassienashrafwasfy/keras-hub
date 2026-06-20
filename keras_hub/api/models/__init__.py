@@ -794,6 +794,15 @@ from keras_hub.src.models.stable_diffusion_1_4.stable_diffusion_1_4_text_to_imag
 from keras_hub.src.models.stable_diffusion_1_4.stable_diffusion_1_4_text_to_image_preprocessor import (
     StableDiffusion1_4TextToImagePreprocessor as StableDiffusion1_4TextToImagePreprocessor,
 )
+from keras_hub.src.models.stable_diffusion_2_1.stable_diffusion_2_1_backbone import (
+    StableDiffusion2_1Backbone as StableDiffusion2_1Backbone,
+)
+from keras_hub.src.models.stable_diffusion_2_1.stable_diffusion_2_1_text_to_image import (
+    StableDiffusion2_1TextToImage as StableDiffusion2_1TextToImage,
+)
+from keras_hub.src.models.stable_diffusion_2_1.stable_diffusion_2_1_text_to_image_preprocessor import (
+    StableDiffusion2_1TextToImagePreprocessor as StableDiffusion2_1TextToImagePreprocessor,
+)
 from keras_hub.src.models.stable_diffusion_3.stable_diffusion_3_backbone import (
     StableDiffusion3Backbone as StableDiffusion3Backbone,
 )
