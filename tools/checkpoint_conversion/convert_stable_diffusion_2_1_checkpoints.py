@@ -59,7 +59,11 @@ PRESET_MAP = {
         "clip": "text_encoder/model.safetensors",
         "vae": "vae/diffusion_pytorch_model.safetensors",
         "unet": "unet/diffusion_pytorch_model.safetensors",
-        "clip_tokenizer": "hf://stabilityai/stable-diffusion-2-1",
+        # SD2.1 uses the OpenCLIP ViT-H/14 BPE vocab (the standard 49408-token
+        # CLIP vocab). Pull `tokenizer.json` from the public, ungated ViT-H
+        # repo (the SD2.1 repo only stores `vocab.json`/`merges.txt` and 401s
+        # for anonymous access).
+        "clip_tokenizer": "hf://laion/CLIP-ViT-H-14-laion2B-s32B-b79K",
         "prediction_type": "v_prediction",
         "image_size": 768,
         "dtype": "float32",
@@ -69,7 +73,7 @@ PRESET_MAP = {
         "clip": "text_encoder/model.safetensors",
         "vae": "vae/diffusion_pytorch_model.safetensors",
         "unet": "unet/diffusion_pytorch_model.safetensors",
-        "clip_tokenizer": "hf://stabilityai/stable-diffusion-2-1-base",
+        "clip_tokenizer": "hf://laion/CLIP-ViT-H-14-laion2B-s32B-b79K",
         "prediction_type": "epsilon",
         "image_size": 512,
         "dtype": "float32",
@@ -140,7 +144,7 @@ def convert_model(preset, height, width):
 
 def convert_preprocessor(preset):
     tokenizer_content = load_json(
-        PRESET_MAP[preset]["clip_tokenizer"], "tokenizer/tokenizer.json"
+        PRESET_MAP[preset]["clip_tokenizer"], "tokenizer.json"
     )
     vocabulary = tokenizer_content["model"]["vocab"]
     merges = tokenizer_content["model"]["merges"]
