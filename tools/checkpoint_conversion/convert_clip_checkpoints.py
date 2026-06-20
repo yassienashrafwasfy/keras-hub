@@ -316,7 +316,10 @@ def convert_image_converter(hf_image_processor):
 
 
 def convert_tokenizer(hf_preset):
-    tokenizer_path = hf_hub_download(hf_preset, "tokenizer.json", token=True)
+    # `token=None` uses a cached HF token if present, else anonymous access.
+    # These are public repos, so don't force `token=True` (which errors when no
+    # token is configured).
+    tokenizer_path = hf_hub_download(hf_preset, "tokenizer.json")
     with open(tokenizer_path, "r") as tokenizer_file:
         tokenizer_content = json.load(tokenizer_file)
     vocabulary = tokenizer_content["model"]["vocab"]
