@@ -22,11 +22,7 @@ python tools/checkpoint_conversion/convert_clip_checkpoints.py \
 python tools/checkpoint_conversion/convert_clip_checkpoints.py \
     --preset tinyclip_vit_61m_32_text_29m_laion400m --upload_uri kaggle://kerashub/clip/keras/tinyclip_vit_61m_32_text_29m_laion400m
 python tools/checkpoint_conversion/convert_clip_checkpoints.py \
-    --preset tinyclip_vit_45m_32_text_18m_laion400m --upload_uri kaggle://kerashub/clip/keras/tinyclip_vit_45m_32_text_18m_laion400m
-python tools/checkpoint_conversion/convert_clip_checkpoints.py \
     --preset tinyclip_vit_40m_32_text_19m_laion400m --upload_uri kaggle://kerashub/clip/keras/tinyclip_vit_40m_32_text_19m_laion400m
-python tools/checkpoint_conversion/convert_clip_checkpoints.py \
-    --preset tinyclip_vit_22m_32_text_10m_laion400m --upload_uri kaggle://kerashub/clip/keras/tinyclip_vit_22m_32_text_10m_laion400m
 python tools/checkpoint_conversion/convert_clip_checkpoints.py \
     --preset tinyclip_vit_39m_16_text_19m_yfcc15m --upload_uri kaggle://kerashub/clip/keras/tinyclip_vit_39m_16_text_19m_yfcc15m
 python tools/checkpoint_conversion/convert_clip_checkpoints.py \
@@ -76,14 +72,8 @@ PRESET_MAP = {
     "tinyclip_vit_61m_32_text_29m_laion400m": (
         "wkcn/TinyCLIP-ViT-61M-32-Text-29M-LAION400M"
     ),
-    "tinyclip_vit_45m_32_text_18m_laion400m": (
-        "wkcn/TinyCLIP-ViT-45M-32-Text-18M-LAION400M"
-    ),
     "tinyclip_vit_40m_32_text_19m_laion400m": (
         "wkcn/TinyCLIP-ViT-40M-32-Text-19M-LAION400M"
-    ),
-    "tinyclip_vit_22m_32_text_10m_laion400m": (
-        "wkcn/TinyCLIP-ViT-22M-32-Text-10M-LAION400M"
     ),
     "tinyclip_vit_39m_16_text_19m_yfcc15m": (
         "wkcn/TinyCLIP-ViT-39M-16-Text-19M-YFCC15M"
