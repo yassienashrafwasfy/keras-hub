@@ -77,6 +77,58 @@ class StableDiffusion2_1BackboneTest(TestCase):
             run_quantization_check=False,
         )
 
+    def test_distilled_topology_no_mid_block(self):
+        # BK-SDM-v2-tiny style: no mid block, cross-attention in every stage.
+        is_jax_cpu = (
+            backend.backend() == "jax"
+            and "cpu" in distribution.list_devices()[0].lower()
+        )
+        vae = VAEBackbone(
+            [32, 32, 32, 32],
+            [1, 1, 1, 1],
+            [32, 32, 32, 32],
+            [1, 1, 1, 1],
+            sampler_method="mode",
+            sample_channels=8,
+            scale=0.18215,
+            shift=0.0,
+            name="vae",
+        )
+        clip = CLIPTextEncoder(
+            20,
+            64,
+            64,
+            2,
+            2,
+            128,
+            "gelu",
+            dtype="float16" if not is_jax_cpu else None,
+            name="clip",
+        )
+        backbone = StableDiffusion2_1Backbone(
+            clip=clip,
+            vae=vae,
+            unet_block_out_channels=(32, 64),
+            unet_layers_per_block=1,
+            unet_head_dim=32,
+            unet_use_mid_block=False,
+            unet_down_block_use_attention=(True, True),
+            unet_up_block_use_attention=(True, True),
+            image_shape=(64, 64, 3),
+        )
+        # The mid block must not be created, and every down/up block is
+        # attentive.
+        self.assertIsNone(backbone.diffuser.mid_block)
+        self.assertTrue(
+            all(block.use_attention for block in backbone.diffuser.down_blocks)
+        )
+        self.assertTrue(
+            all(block.use_attention for block in backbone.diffuser.up_blocks)
+        )
+        outputs = backbone(self.input_data)
+        self.assertEqual(tuple(outputs["images"].shape), (2, 64, 64, 3))
+        self.assertEqual(tuple(outputs["latents"].shape), (2, 8, 8, 4))
+
     @pytest.mark.large
     def test_saved_model(self):
         self.run_model_saving_test(

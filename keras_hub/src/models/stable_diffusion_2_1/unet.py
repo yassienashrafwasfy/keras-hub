@@ -763,6 +763,14 @@ class UNet(Backbone):
         use_linear_projection: bool. Whether the spatial transformers use
             `Dense` input/output projections (the SD v2.x layout). Defaults to
             `True`.
+        use_mid_block: bool. Whether to include the cross-attention mid block.
+            Distilled variants such as BK-SDM-v2-tiny omit it. Defaults to
+            `True`.
+        down_block_use_attention: list of bool or `None`. Whether each down
+            block uses cross-attention. Defaults to every block except the last
+            (the standard SD2 layout).
+        up_block_use_attention: list of bool or `None`. Whether each up block
+            uses cross-attention. Defaults to every block except the first.
         data_format: `None` or str. Only `"channels_last"` is supported.
         dtype: string or `keras.mixed_precision.DTypePolicy`. The dtype to use
             for the model's computations and weights.
@@ -778,6 +786,9 @@ class UNet(Backbone):
         cross_attention_dim=1024,
         context_max_length=77,
         use_linear_projection=True,
+        use_mid_block=True,
+        down_block_use_attention=None,
+        up_block_use_attention=None,
         data_format=None,
         dtype=None,
         **kwargs,
@@ -789,6 +800,21 @@ class UNet(Backbone):
         head_dim = int(head_dim)
         time_embed_dim = block_out_channels[0] * 4
         num_blocks = len(block_out_channels)
+
+        # Attention placement defaults to the standard SD2 layout (every down
+        # block except the last, every up block except the first). Distilled
+        # variants such as BK-SDM-v2-tiny use attention in all blocks.
+        if down_block_use_attention is None:
+            down_block_use_attention = tuple(
+                i != num_blocks - 1 for i in range(num_blocks)
+            )
+        if up_block_use_attention is None:
+            up_block_use_attention = tuple(i != 0 for i in range(num_blocks))
+        down_block_use_attention = tuple(
+            bool(x) for x in down_block_use_attention
+        )
+        up_block_use_attention = tuple(bool(x) for x in up_block_use_attention)
+        use_mid_block = bool(use_mid_block)
 
         # The number of heads scales with the block width at a fixed head dim.
         def num_heads_for(filters):
@@ -809,7 +835,7 @@ class UNet(Backbone):
             name="conv_in",
         )
 
-        # Down blocks: cross-attention for all but the last block.
+        # Down blocks: attention placement follows `down_block_use_attention`.
         self.down_blocks = []
         for i in range(num_blocks):
             self.down_blocks.append(
@@ -817,7 +843,7 @@ class UNet(Backbone):
                     block_out_channels[i],
                     layers_per_block,
                     num_heads_for(block_out_channels[i]),
-                    use_attention=(i != num_blocks - 1),
+                    use_attention=down_block_use_attention[i],
                     add_downsample=(i != num_blocks - 1),
                     use_linear_projection=use_linear_projection,
                     dtype=dtype,
@@ -825,15 +851,19 @@ class UNet(Backbone):
                 )
             )
 
-        self.mid_block = MidBlock2D(
-            block_out_channels[-1],
-            num_heads_for(block_out_channels[-1]),
-            use_linear_projection=use_linear_projection,
-            dtype=dtype,
-            name="mid_block",
-        )
+        # The mid block is omitted by distilled variants
+        # (`mid_block_type=null`).
+        self.mid_block = None
+        if use_mid_block:
+            self.mid_block = MidBlock2D(
+                block_out_channels[-1],
+                num_heads_for(block_out_channels[-1]),
+                use_linear_projection=use_linear_projection,
+                dtype=dtype,
+                name="mid_block",
+            )
 
-        # Up blocks mirror the down blocks: the first up block has no attention.
+        # Up blocks mirror the down blocks (`up_block_use_attention`).
         reversed_channels = list(reversed(block_out_channels))
         self.up_blocks = []
         for i in range(num_blocks):
@@ -842,7 +872,7 @@ class UNet(Backbone):
                     reversed_channels[i],
                     layers_per_block + 1,
                     num_heads_for(reversed_channels[i]),
-                    use_attention=(i != 0),
+                    use_attention=up_block_use_attention[i],
                     add_upsample=(i != num_blocks - 1),
                     use_linear_projection=use_linear_projection,
                     dtype=dtype,
@@ -876,7 +906,8 @@ class UNet(Backbone):
             x, states = down_block(x, time_emb, context_input)
             res_samples.extend(states)
 
-        x = self.mid_block(x, time_emb, context_input)
+        if self.mid_block is not None:
+            x = self.mid_block(x, time_emb, context_input)
 
         for up_block in self.up_blocks:
             num = up_block.num_layers
@@ -909,6 +940,9 @@ class UNet(Backbone):
         self.cross_attention_dim = cross_attention_dim
         self.context_max_length = context_max_length
         self.use_linear_projection = use_linear_projection
+        self.use_mid_block = use_mid_block
+        self.down_block_use_attention = down_block_use_attention
+        self.up_block_use_attention = up_block_use_attention
 
     def get_config(self):
         config = super().get_config()
@@ -922,6 +956,9 @@ class UNet(Backbone):
                 "cross_attention_dim": self.cross_attention_dim,
                 "context_max_length": self.context_max_length,
                 "use_linear_projection": self.use_linear_projection,
+                "use_mid_block": self.use_mid_block,
+                "down_block_use_attention": self.down_block_use_attention,
+                "up_block_use_attention": self.up_block_use_attention,
             }
         )
         return config

@@ -98,6 +98,15 @@ class StableDiffusion2_1Backbone(Backbone):
             number of heads per transformer is `block_filters // head_dim`.
         unet_use_linear_projection: bool. Whether the UNet spatial transformers
             use `Dense` input/output projections. Defaults to `True`.
+        unet_use_mid_block: bool. Whether the UNet includes the cross-attention
+            mid block. Distilled variants such as BK-SDM-v2-tiny omit it.
+            Defaults to `True`.
+        unet_down_block_use_attention: list of bool or `None`. Whether each UNet
+            down block uses cross-attention. `None` selects the standard SD2
+            layout (every block except the last).
+        unet_up_block_use_attention: list of bool or `None`. Whether each UNet
+            up block uses cross-attention. `None` selects the standard SD2
+            layout (every block except the first).
         num_train_timesteps: int. The number of diffusion steps used to train
             the model. Defaults to `1000`.
         prediction_type: str. Either `"epsilon"` or `"v_prediction"`. Defaults
@@ -141,6 +150,9 @@ class StableDiffusion2_1Backbone(Backbone):
         unet_layers_per_block=2,
         unet_head_dim=64,
         unet_use_linear_projection=True,
+        unet_use_mid_block=True,
+        unet_down_block_use_attention=None,
+        unet_up_block_use_attention=None,
         num_train_timesteps=1000,
         prediction_type="v_prediction",
         latent_channels=4,
@@ -174,6 +186,9 @@ class StableDiffusion2_1Backbone(Backbone):
             cross_attention_dim=clip.hidden_dim,
             context_max_length=clip.max_sequence_length,
             use_linear_projection=unet_use_linear_projection,
+            use_mid_block=unet_use_mid_block,
+            down_block_use_attention=unet_down_block_use_attention,
+            up_block_use_attention=unet_up_block_use_attention,
             data_format=data_format,
             dtype=dtype,
             name="diffuser",
@@ -262,6 +277,9 @@ class StableDiffusion2_1Backbone(Backbone):
         self.unet_layers_per_block = unet_layers_per_block
         self.unet_head_dim = unet_head_dim
         self.unet_use_linear_projection = unet_use_linear_projection
+        self.unet_use_mid_block = unet_use_mid_block
+        self.unet_down_block_use_attention = unet_down_block_use_attention
+        self.unet_up_block_use_attention = unet_up_block_use_attention
         self.num_train_timesteps = num_train_timesteps
         self.prediction_type = prediction_type
         self.latent_channels = latent_channels
@@ -342,6 +360,13 @@ class StableDiffusion2_1Backbone(Backbone):
                 "unet_layers_per_block": self.unet_layers_per_block,
                 "unet_head_dim": self.unet_head_dim,
                 "unet_use_linear_projection": self.unet_use_linear_projection,
+                "unet_use_mid_block": self.unet_use_mid_block,
+                "unet_down_block_use_attention": (
+                    self.unet_down_block_use_attention
+                ),
+                "unet_up_block_use_attention": (
+                    self.unet_up_block_use_attention
+                ),
                 "clip": layers.serialize(self.clip),
                 "vae": layers.serialize(self.vae),
                 "num_train_timesteps": self.num_train_timesteps,

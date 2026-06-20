@@ -69,6 +69,11 @@ PRESET_MAP = {
         "prediction_type": "v_prediction",
         "image_size": 768,
         "dtype": "float32",
+        "unet_block_out_channels": (320, 640, 1280, 1280),
+        "unet_layers_per_block": 2,
+        "unet_use_mid_block": True,
+        "unet_down_block_use_attention": None,
+        "unet_up_block_use_attention": None,
     },
     "stable_diffusion_2_1_base": {
         "root": "hf://stabilityai/stable-diffusion-2-1-base",
@@ -79,6 +84,30 @@ PRESET_MAP = {
         "prediction_type": "epsilon",
         "image_size": 512,
         "dtype": "float32",
+        "unet_block_out_channels": (320, 640, 1280, 1280),
+        "unet_layers_per_block": 2,
+        "unet_use_mid_block": True,
+        "unet_down_block_use_attention": None,
+        "unet_up_block_use_attention": None,
+    },
+    # Nota AI's block-removed, knowledge-distilled SD2 (0.33B UNet). Same
+    # CLIP/VAE/scheduler and `epsilon`/512px config as `*_base`; the UNet drops
+    # the deepest stage, halves the resnets per block, runs attention in every
+    # stage, and removes the mid block (`mid_block_type=null`).
+    "bk_sdm_v2_tiny": {
+        "root": "hf://nota-ai/bk-sdm-v2-tiny",
+        "clip": "text_encoder/model.safetensors",
+        "vae": "vae/diffusion_pytorch_model.safetensors",
+        "unet": "unet/diffusion_pytorch_model.safetensors",
+        "clip_tokenizer": "hf://laion/CLIP-ViT-H-14-laion2B-s32B-b79K",
+        "prediction_type": "epsilon",
+        "image_size": 512,
+        "dtype": "float32",
+        "unet_block_out_channels": (320, 640, 1280),
+        "unet_layers_per_block": 1,
+        "unet_use_mid_block": False,
+        "unet_down_block_use_attention": (True, True, True),
+        "unet_up_block_use_attention": (True, True, True),
     },
 }
 
@@ -132,10 +161,13 @@ def convert_model(preset, height, width):
     backbone = StableDiffusion2_1Backbone(
         clip=clip,
         vae=vae,
-        unet_block_out_channels=(320, 640, 1280, 1280),
-        unet_layers_per_block=2,
+        unet_block_out_channels=config["unet_block_out_channels"],
+        unet_layers_per_block=config["unet_layers_per_block"],
         unet_head_dim=64,
         unet_use_linear_projection=True,
+        unet_use_mid_block=config["unet_use_mid_block"],
+        unet_down_block_use_attention=config["unet_down_block_use_attention"],
+        unet_up_block_use_attention=config["unet_up_block_use_attention"],
         prediction_type=config["prediction_type"],
         image_shape=(height, width, 3),
         dtype=dtype,
@@ -320,16 +352,17 @@ def convert_weights(preset, keras_model):
                         f"{prefix}.downsamplers.0.conv",
                     )
 
-            # Mid block.
-            port_unet_resnet(
-                loader, model.mid_block.resnet_0, "mid_block.resnets.0"
-            )
-            port_transformer(
-                loader, model.mid_block.attention, "mid_block.attentions.0"
-            )
-            port_unet_resnet(
-                loader, model.mid_block.resnet_1, "mid_block.resnets.1"
-            )
+            # Mid block (absent in distilled variants such as BK-SDM-v2-tiny).
+            if model.mid_block is not None:
+                port_unet_resnet(
+                    loader, model.mid_block.resnet_0, "mid_block.resnets.0"
+                )
+                port_transformer(
+                    loader, model.mid_block.attention, "mid_block.attentions.0"
+                )
+                port_unet_resnet(
+                    loader, model.mid_block.resnet_1, "mid_block.resnets.1"
+                )
 
             # Up blocks.
             for i, block in enumerate(model.up_blocks):
