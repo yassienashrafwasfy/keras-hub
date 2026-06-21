@@ -118,6 +118,9 @@ from keras_hub.src.models.d_fine.d_fine_object_detector import (
 from keras_hub.src.models.d_fine.d_fine_object_detector_preprocessor import (
     DFineObjectDetectorPreprocessor as DFineObjectDetectorPreprocessor,
 )
+from keras_hub.src.models.dc_ae.dc_ae_backbone import (
+    DCAEBackbone as DCAEBackbone,
+)
 from keras_hub.src.models.deberta_v3.deberta_v3_backbone import (
     DebertaV3Backbone as DebertaV3Backbone,
 )
