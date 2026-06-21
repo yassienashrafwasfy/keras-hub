@@ -11,8 +11,9 @@ def pixel_unshuffle(x, factor):
     channel ordering matches PyTorch: channel `c * factor ** 2 + i * factor + j`
     holds the `(i, j)` offset within each `factor x factor` spatial block.
     """
-    b = ops.shape(x)[0]
-    _, height, width, channels = x.shape
+    shape = ops.shape(x)
+    b, height, width = shape[0], shape[1], shape[2]
+    channels = x.shape[-1]
     new_height = height // factor
     new_width = width // factor
     x = ops.reshape(x, (b, new_height, factor, new_width, factor, channels))
@@ -28,8 +29,9 @@ def pixel_shuffle(x, factor):
     `(B, H, W, C * factor ** 2) -> (B, H * factor, W * factor, C)`, inverse of
     `pixel_unshuffle`.
     """
-    b = ops.shape(x)[0]
-    _, height, width, channels = x.shape
+    shape = ops.shape(x)
+    b, height, width = shape[0], shape[1], shape[2]
+    channels = x.shape[-1]
     new_channels = channels // (factor * factor)
     x = ops.reshape(x, (b, height, width, new_channels, factor, factor))
     # (b, height, factor, width, factor, new_channels)
@@ -280,9 +282,13 @@ class SanaMultiscaleLinearAttention(keras.layers.Layer):
 
     def call(self, inputs):
         residual = inputs
-        _, height, width, _ = inputs.shape
+        shape = ops.shape(inputs)
+        b, height, width = shape[0], shape[1], shape[2]
         n = height * width
         head_dim = self.attention_head_dim
+        # Static dims (concrete at eager call time) decide linear vs quadratic
+        # attention; diffusers uses quadratic only when `H * W <= head_dim`.
+        static_h, static_w = inputs.shape[1], inputs.shape[2]
 
         query = self.to_q(inputs)
         key = self.to_k(inputs)
@@ -296,22 +302,25 @@ class SanaMultiscaleLinearAttention(keras.layers.Layer):
 
         # Mimic the channels-first reshape in diffusers:
         # (B, H, W, C_total) -> (B, C_total, N) -> (B, heads, 3 * head_dim, N).
-        qkv = ops.reshape(qkv, (-1, n, qkv.shape[-1]))
+        qkv = ops.reshape(qkv, (b, n, qkv.shape[-1]))
         qkv = ops.transpose(qkv, (0, 2, 1))
-        qkv = ops.reshape(qkv, (-1, self.num_heads, 3 * head_dim, n))
+        qkv = ops.reshape(qkv, (b, self.num_heads, 3 * head_dim, n))
         query, key, value = ops.split(qkv, 3, axis=2)
         query = self.nonlinearity(query)
         key = self.nonlinearity(key)
 
-        use_linear = (n is None) or (n > head_dim)
+        if static_h is None or static_w is None:
+            use_linear = True
+        else:
+            use_linear = static_h * static_w > head_dim
         if use_linear:
             hidden = self._linear_attention(query, key, value)
         else:
             hidden = self._quadratic_attention(query, key, value)
 
-        hidden = ops.reshape(hidden, (-1, self.inner_dim, n))
+        hidden = ops.reshape(hidden, (b, self.inner_dim, n))
         hidden = ops.transpose(hidden, (0, 2, 1))
-        hidden = ops.reshape(hidden, (-1, height, width, self.inner_dim))
+        hidden = ops.reshape(hidden, (b, height, width, self.inner_dim))
 
         hidden = self.to_out(hidden)
         hidden = self.norm_out(hidden)
@@ -435,8 +444,8 @@ class DCDownBlock2d(keras.layers.Layer):
             x = pixel_unshuffle(x, self.factor)
         if self.shortcut:
             y = pixel_unshuffle(inputs, self.factor)
-            b = ops.shape(y)[0]
-            _, h, w, _ = y.shape
+            shape = ops.shape(y)
+            b, h, w = shape[0], shape[1], shape[2]
             y = ops.reshape(y, (b, h, w, self.out_channels, self.group_size))
             y = ops.mean(y, axis=-1)
             return x + y
@@ -607,14 +616,26 @@ class DCAEEncoder(keras.layers.Layer):
         for block in self.blocks:
             x = block(x)
         if self.out_shortcut:
-            b = ops.shape(x)[0]
-            _, h, w, _ = x.shape
+            shape = ops.shape(x)
+            b, h, w = shape[0], shape[1], shape[2]
             shortcut = ops.reshape(
                 x, (b, h, w, self.latent_channels, self.out_shortcut_group_size)
             )
             shortcut = ops.mean(shortcut, axis=-1)
             return self.conv_out(x) + shortcut
         return self.conv_out(x)
+
+    def compute_output_shape(self, input_shape):
+        # Chain the static shapes of the sublayers so the functional build
+        # stays symbolic. Without this, Keras cannot infer the output shape
+        # (the dynamic `ops.shape` calls collapse it to `None`) and the torch
+        # backend falls back to eagerly running the encoder on the GPU.
+        shape = self.conv_in.compute_output_shape(input_shape)
+        for block in self.blocks:
+            shape = block.compute_output_shape(shape)
+        shape = list(self.conv_out.compute_output_shape(shape))
+        shape[-1] = self.latent_channels
+        return tuple(shape)
 
 
 class DCAEDecoder(keras.layers.Layer):
@@ -729,3 +750,16 @@ class DCAEDecoder(keras.layers.Layer):
         x = self.conv_act(x)
         x = self.conv_out(x)
         return x
+
+    def compute_output_shape(self, input_shape):
+        # Chain the static shapes of the sublayers so the functional build
+        # stays symbolic. Without this, Keras cannot infer the output shape
+        # (the dynamic `ops.shape` calls collapse it to `None`) and the torch
+        # backend falls back to eagerly running the full decoder on the GPU,
+        # which exhausts memory.
+        shape = self.conv_in.compute_output_shape(input_shape)
+        for block in self.blocks:
+            shape = block.compute_output_shape(shape)
+        shape = self.norm_out.compute_output_shape(shape)
+        shape = self.conv_out.compute_output_shape(shape)
+        return shape

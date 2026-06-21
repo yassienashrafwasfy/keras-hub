@@ -176,7 +176,13 @@ class DCAEBackbone(Backbone):
         )
 
         # === Functional Model ===
-        image_input = keras.Input(shape=image_shape)
+        # Build the graph at the smallest valid resolution (one latent pixel)
+        # so the trace stays tiny; tracing the full `image_shape` would run the
+        # entire high-resolution encode/decode and exhaust memory. All weights
+        # are spatial independent, so this does not constrain the input size at
+        # call time, and `encode`/`decode` accept any size divisible by the
+        # compression ratio.
+        image_input = keras.Input(shape=(compression, compression, in_channels))
         latent = self.encoder(image_input)
         image_output = self.decoder(latent)
         super().__init__(
