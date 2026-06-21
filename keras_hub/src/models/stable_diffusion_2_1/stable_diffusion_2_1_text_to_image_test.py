@@ -104,3 +104,21 @@ class StableDiffusion2_1TextToImageTest(TestCase):
         text_to_image.generate("airplane")
         second_fn = text_to_image.generate_function
         self.assertEqual(first_fn, second_fn)
+
+    def test_generate_varying_num_steps(self):
+        # Generating at one step count then another on the same instance must
+        # match a fresh instance at the second count. Regression test for the
+        # cached generate function reusing a scheduler traced for a different
+        # `num_steps` (which indexed stale per-step arrays out of range and
+        # produced a near-solid-color image).
+        reuse = StableDiffusion2_1TextToImage(**self.init_kwargs)
+        reuse.generate("airplane", num_steps=3, seed=42)
+        reuse_output = reuse.generate("airplane", num_steps=5, seed=42)
+        # The function must retrace when the step count changes.
+        self.assertEqual(reuse._generate_num_steps, 5)
+
+        fresh = StableDiffusion2_1TextToImage(**self.init_kwargs)
+        for a, b in zip(fresh.weights, reuse.weights):
+            a.assign(b.numpy())
+        fresh_output = fresh.generate("airplane", num_steps=5, seed=42)
+        self.assertAllClose(reuse_output, fresh_output)

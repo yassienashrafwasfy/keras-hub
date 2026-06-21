@@ -296,6 +296,17 @@ class TextToImage(Task):
             seed: optional int. Used as a random seed.
         """
         num_steps = int(num_steps)
+        # The compiled generate function captures the scheduler's per-step
+        # tensors (sigmas, timesteps, alphas, ...), whose length is
+        # `num_steps + 1`. Reusing a function traced for a different step count
+        # indexes those stale arrays inside the `num_steps`-long sampling loop,
+        # which on most backends silently clamps out-of-range gathers to the
+        # final (zero-noise) entry and yields a corrupted, near-solid-color
+        # image. Invalidate the cache so the function retraces against the
+        # freshly configured scheduler whenever the step count changes.
+        if getattr(self, "_generate_num_steps", None) != num_steps:
+            self.generate_function = None
+            self._generate_num_steps = num_steps
         guidance_scale = (
             float(guidance_scale) if guidance_scale is not None else None
         )

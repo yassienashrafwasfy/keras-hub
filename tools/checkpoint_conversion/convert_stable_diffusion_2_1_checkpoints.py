@@ -76,7 +76,9 @@ PRESET_MAP = {
         "unet_up_block_use_attention": None,
     },
     "stable_diffusion_2_1_base": {
-        "root": "hf://stabilityai/stable-diffusion-2-1-base",
+        # `stabilityai/stable-diffusion-2-1-base` is gated; this is an
+        # identical, ungated community mirror with the same diffusers layout.
+        "root": "hf://sd2-community/stable-diffusion-2-1-base",
         "clip": "text_encoder/model.safetensors",
         "vae": "vae/diffusion_pytorch_model.safetensors",
         "unet": "unet/diffusion_pytorch_model.safetensors",
