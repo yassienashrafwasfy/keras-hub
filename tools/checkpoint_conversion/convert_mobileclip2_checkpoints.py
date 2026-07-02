@@ -311,13 +311,17 @@ def validate_output(
             (logit_scale * image_features @ text_features.t()).cpu().numpy()
         )
 
-    # Keras forward pass.
+    # Keras forward pass. Call the model directly (not `.predict()`) so we can
+    # feed the image and text batches independently (1 image vs. 2 prompts).
     keras_preprocessor = MobileCLIP2Preprocessor(keras_tokenizer)
     token_ids = keras_preprocessor(
         {"images": keras_preprocessed, "prompts": text}
     )["token_ids"]
-    keras_outputs = keras_model.predict(
-        {"images": keras_preprocessed, "token_ids": token_ids}, verbose=0
+    keras_outputs = keras_model(
+        {
+            "images": keras.ops.convert_to_tensor(keras_preprocessed),
+            "token_ids": keras.ops.convert_to_tensor(token_ids),
+        }
     )
     keras_vision_logits = keras.ops.convert_to_numpy(
         keras_outputs["vision_logits"]
