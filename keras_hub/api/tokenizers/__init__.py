@@ -71,6 +71,9 @@ from keras_hub.src.models.mistral.mistral_tokenizer import (
 from keras_hub.src.models.mixtral.mixtral_tokenizer import (
     MixtralTokenizer as MixtralTokenizer,
 )
+from keras_hub.src.models.mobileclip2.mobileclip2_tokenizer import (
+    MobileCLIP2Tokenizer as MobileCLIP2Tokenizer,
+)
 from keras_hub.src.models.moonshine.moonshine_tokenizer import (
     MoonshineTokenizer as MoonshineTokenizer,
 )

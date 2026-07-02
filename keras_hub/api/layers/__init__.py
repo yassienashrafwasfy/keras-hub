@@ -130,6 +130,9 @@ from keras_hub.src.models.metaclip_2.metaclip_2_image_converter import (
 from keras_hub.src.models.mit.mit_image_converter import (
     MiTImageConverter as MiTImageConverter,
 )
+from keras_hub.src.models.mobileclip2.mobileclip2_image_converter import (
+    MobileCLIP2ImageConverter as MobileCLIP2ImageConverter,
+)
 from keras_hub.src.models.mobilenet.mobilenet_image_converter import (
     MobileNetImageConverter as MobileNetImageConverter,
 )

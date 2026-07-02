@@ -492,6 +492,21 @@ from keras_hub.src.models.mixtral.mixtral_causal_lm_preprocessor import (
 from keras_hub.src.models.mixtral.mixtral_tokenizer import (
     MixtralTokenizer as MixtralTokenizer,
 )
+from keras_hub.src.models.mobileclip2.mobileclip2_backbone import (
+    MobileCLIP2Backbone as MobileCLIP2Backbone,
+)
+from keras_hub.src.models.mobileclip2.mobileclip2_preprocessor import (
+    MobileCLIP2Preprocessor as MobileCLIP2Preprocessor,
+)
+from keras_hub.src.models.mobileclip2.mobileclip2_text_encoder import (
+    MobileCLIP2TextEncoder as MobileCLIP2TextEncoder,
+)
+from keras_hub.src.models.mobileclip2.mobileclip2_tokenizer import (
+    MobileCLIP2Tokenizer as MobileCLIP2Tokenizer,
+)
+from keras_hub.src.models.mobileclip2.mobileclip2_vision_encoder import (
+    MobileCLIP2VisionEncoder as MobileCLIP2VisionEncoder,
+)
 from keras_hub.src.models.mobilenet.mobilenet_backbone import (
     MobileNetBackbone as MobileNetBackbone,
 )
