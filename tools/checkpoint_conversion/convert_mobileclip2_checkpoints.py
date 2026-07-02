@@ -293,6 +293,13 @@ def validate_output(
         keras_image_converter(images)
     )
 
+    # Keras tokenization (reused as reference input to isolate tokenization).
+    keras_preprocessor = MobileCLIP2Preprocessor(keras_tokenizer)
+    token_ids = keras_preprocessor(
+        {"images": keras_preprocessed, "prompts": text}
+    )["token_ids"]
+    token_ids_np = keras.ops.convert_to_numpy(token_ids)
+
     # Reference (open_clip) forward pass.
     reference_tokenizer = open_clip.get_tokenizer("MobileCLIP-B")
     reference_model.eval()
@@ -300,33 +307,53 @@ def validate_output(
         pixel_values = torch.from_numpy(
             np.transpose(keras_preprocessed, (0, 3, 1, 2))
         )
+        reference_token_ids = reference_tokenizer(text)
         image_features = reference_model.encode_image(pixel_values)
-        text_features = reference_model.encode_text(reference_tokenizer(text))
+        text_features = reference_model.encode_text(reference_token_ids)
         image_features = image_features / image_features.norm(
             dim=-1, keepdim=True
         )
         text_features = text_features / text_features.norm(dim=-1, keepdim=True)
         logit_scale = reference_model.logit_scale.exp()
+        reference_image_features = image_features.cpu().numpy()
+        reference_text_features = text_features.cpu().numpy()
         reference_vision_logits = (
             (logit_scale * image_features @ text_features.t()).cpu().numpy()
         )
 
-    # Keras forward pass. Call the model directly (not `.predict()`) so we can
-    # feed the image and text batches independently (1 image vs. 2 prompts).
-    keras_preprocessor = MobileCLIP2Preprocessor(keras_tokenizer)
-    token_ids = keras_preprocessor(
-        {"images": keras_preprocessed, "prompts": text}
-    )["token_ids"]
-    keras_outputs = keras_model(
-        {
-            "images": keras.ops.convert_to_tensor(keras_preprocessed),
-            "token_ids": keras.ops.convert_to_tensor(token_ids),
-        }
+    # Keras per-tower embeddings (call the towers directly, not `.predict()`).
+    keras_image_features = keras.ops.convert_to_numpy(
+        keras_model.get_vision_embeddings(
+            keras.ops.convert_to_tensor(keras_preprocessed)
+        )
     )
-    keras_vision_logits = keras.ops.convert_to_numpy(
-        keras_outputs["vision_logits"]
+    keras_text_features = keras.ops.convert_to_numpy(
+        keras_model.get_text_embeddings(keras.ops.convert_to_tensor(token_ids))
+    )
+    keras_image_features = keras_image_features / np.linalg.norm(
+        keras_image_features, axis=-1, keepdims=True
+    )
+    keras_text_features = keras_text_features / np.linalg.norm(
+        keras_text_features, axis=-1, keepdims=True
+    )
+    keras_vision_logits = (
+        logit_scale.cpu().numpy() * keras_image_features @ keras_text_features.T
     )
 
+    # === Diagnostics ===
+    print("🔷 Keras token_ids[0][:12]:", token_ids_np[0][:12])
+    print(
+        "🔷 Reference token_ids[0][:12]:",
+        reference_token_ids.cpu().numpy()[0][:12],
+    )
+    print(
+        "🔷 Image feature diff:",
+        np.mean(np.abs(keras_image_features - reference_image_features)),
+    )
+    print(
+        "🔷 Text feature diff (per prompt):",
+        np.mean(np.abs(keras_text_features - reference_text_features), axis=-1),
+    )
     print("🔶 Keras output:", keras_vision_logits[0])
     print("🔶 Reference output:", reference_vision_logits[0])
     modeling_diff = np.mean(

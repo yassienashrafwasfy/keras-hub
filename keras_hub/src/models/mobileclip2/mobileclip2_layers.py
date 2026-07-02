@@ -194,25 +194,18 @@ class MobileCLIP2VisionEmbedding(layers.Layer):
             dtype=self.variable_dtype,
             name="class_embedding",
         )
-        self.position_ids = self.add_weight(
-            shape=(1, self.num_patches),
-            initializer="zeros",
-            # Let the backend determine the int dtype. For example, tf
-            # requires int64 for correct device placement, whereas jax and torch
-            # don't.
-            dtype=int,
-            trainable=False,
-            name="position_ids",
-        )
         self.conv_stem.build(input_shape)
-        self.position_embedding.build(self.position_ids.shape)
+        self.position_embedding.build((1, self.num_patches))
         self.built = True
 
     def call(self, inputs, training=None):
         x = inputs
         batch_size = ops.shape(x)[0]
         patch_embeddings = self.conv_stem(x, training=training)
-        position_embeddings = self.position_embedding(self.position_ids)
+        # Positions are a simple `arange`; unlike OpenAI CLIP, the source
+        # checkpoint has no `position_ids` buffer to port.
+        position_ids = ops.expand_dims(ops.arange(self.num_patches), axis=0)
+        position_embeddings = self.position_embedding(position_ids)
         patch_embeddings = ops.add(patch_embeddings, position_embeddings)
         class_embeddings = ops.expand_dims(self.class_embedding, axis=(0, 1))
         class_embeddings = ops.tile(class_embeddings, (batch_size, 1, 1))
