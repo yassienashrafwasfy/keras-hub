@@ -189,7 +189,7 @@ class BLIP2FlanT5Test(TestCase):
             model(self.data, training=True),
         )
 
-    @pytest.mark.large
+    @pytest.mark.extra_large
     def test_xl_config_instantiates(self):
         model = BLIP2FlanT5(**_XL)
         self.assertIsNotNone(model)

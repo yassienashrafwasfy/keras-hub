@@ -27,7 +27,7 @@ class TestTask(TestCase):
             {"images": image, "encoder_text": "a photo of"}, max_length=15
         )
 
-    @pytest.mark.large
+    @pytest.mark.extra_large
     def test_class_detection_opt(self):
         preset = "hf://Salesforce/blip2-opt-2.7b"
         model = CausalLM.from_preset(preset, load_weights=False)
@@ -35,7 +35,7 @@ class TestTask(TestCase):
         model = Backbone.from_preset(preset, load_weights=False)
         self.assertIsInstance(model, BLIP2Backbone)
 
-    @pytest.mark.large
+    @pytest.mark.extra_large
     def test_class_detection_flan_t5(self):
         preset = "hf://Salesforce/blip2-flan-t5-xl"
         model = Seq2SeqLM.from_preset(preset, load_weights=False)
