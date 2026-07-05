@@ -435,17 +435,29 @@ class DCDownBlock2d(keras.layers.Layer):
             if downsample
             else self.out_channels
         )
+        # torch pads a 3x3 conv symmetrically (`padding=1`). Keras `"same"`
+        # only matches that at stride 1; at stride 2 (the `Conv` downsample) it
+        # pads asymmetrically, so pad explicitly and use a `"valid"` conv.
+        if stride == 2:
+            self.pad = keras.layers.ZeroPadding2D(
+                padding=1, dtype=self.dtype_policy, name="pad"
+            )
+            conv_padding = "valid"
+        else:
+            self.pad = None
+            conv_padding = "same"
         self.conv = keras.layers.Conv2D(
             conv_out_channels,
             3,
             strides=stride,
-            padding="same",
+            padding=conv_padding,
             dtype=self.dtype_policy,
             name="conv",
         )
 
     def call(self, inputs):
-        x = self.conv(inputs)
+        x = self.pad(inputs) if self.pad is not None else inputs
+        x = self.conv(x)
         if self.downsample:
             x = pixel_unshuffle(x, self.factor)
         if self.shortcut:
