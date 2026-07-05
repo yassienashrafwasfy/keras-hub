@@ -57,13 +57,15 @@ def convert_backbone_config(transformers_config):
             "projection_dim", text_config.get("projection_dim")
         )
 
-    image_size = vision_config["image_size"]
+    # Some checkpoints (e.g. Long-CLIP) omit keys that match the HuggingFace
+    # defaults, so read them with `.get(key, hf_default)` on the raw dict.
+    image_size = vision_config.get("image_size", 224)
 
     return {
         "vision_encoder": CLIPVisionEncoder(
             patch_size=vision_config["patch_size"],
             hidden_dim=vision_config["hidden_size"],
-            num_layers=vision_config["num_hidden_layers"],
+            num_layers=vision_config.get("num_hidden_layers", 12),
             num_heads=vision_config["num_attention_heads"],
             intermediate_dim=vision_config["intermediate_size"],
             intermediate_activation=vision_config.get(
@@ -72,14 +74,16 @@ def convert_backbone_config(transformers_config):
             image_shape=(image_size, image_size, 3),
         ),
         "text_encoder": CLIPTextEncoder(
-            vocabulary_size=text_config["vocab_size"],
+            vocabulary_size=text_config.get("vocab_size", 49408),
             embedding_dim=text_config["hidden_size"],
             hidden_dim=text_config["hidden_size"],
-            num_layers=text_config["num_hidden_layers"],
+            num_layers=text_config.get("num_hidden_layers", 12),
             num_heads=text_config["num_attention_heads"],
             intermediate_dim=text_config["intermediate_size"],
             intermediate_activation=text_config.get("hidden_act", "quick_gelu"),
-            max_sequence_length=text_config["max_position_embeddings"],
+            max_sequence_length=text_config.get(
+                "max_position_embeddings", 77
+            ),
         ),
         "projection_dim": projection_dim,
     }

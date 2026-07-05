@@ -27,6 +27,8 @@ python tools/checkpoint_conversion/convert_clip_checkpoints.py \
     --preset tinyclip_vit_39m_16_text_19m_yfcc15m --upload_uri kaggle://kerashub/clip/keras/tinyclip_vit_39m_16_text_19m_yfcc15m
 python tools/checkpoint_conversion/convert_clip_checkpoints.py \
     --preset tinyclip_vit_8m_16_text_3m_yfcc15m --upload_uri kaggle://kerashub/clip/keras/tinyclip_vit_8m_16_text_3m_yfcc15m
+python tools/checkpoint_conversion/convert_clip_checkpoints.py \
+    --preset clip_vit_large_patch14_long_sae --upload_uri kaggle://kerashub/clip/keras/clip_vit_large_patch14_long_sae
 """
 
 import json
@@ -81,6 +83,8 @@ PRESET_MAP = {
     "tinyclip_vit_8m_16_text_3m_yfcc15m": (
         "wkcn/TinyCLIP-ViT-8M-16-Text-3M-YFCC15M"
     ),
+    # Long-CLIP (ViT-L/14 with a 248-token text context, SAE fine-tune).
+    "clip_vit_large_patch14_long_sae": "zer0int/LongCLIP-SAE-ViT-L-14",
 }
 
 flags.DEFINE_string(
@@ -432,6 +436,21 @@ def main(_):
     keras_model.save_to_preset(f"./{preset}")
     keras_image_converter.save_to_preset(f"./{preset}")
     keras_tokenizer.save_to_preset(f"./{preset}")
+
+    # Long-context presets (e.g. Long-CLIP) stretch the text tower beyond the
+    # default 77-token context. Save a preprocessor so `from_preset` uses the
+    # full `sequence_length` out of the box; standard presets keep the default.
+    text_sequence_length = keras_model.text_encoder.max_sequence_length
+    if text_sequence_length != 77:
+        keras_preprocessor = CLIPPreprocessor(
+            tokenizer=keras_tokenizer,
+            image_converter=keras_image_converter,
+            sequence_length=text_sequence_length,
+        )
+        keras_preprocessor.save_to_preset(f"./{preset}")
+        print(
+            f"✅ Preprocessor saved (sequence_length={text_sequence_length})."
+        )
     print(f"🏁 Preset saved to ./{preset}.")
 
     upload_uri = FLAGS.upload_uri

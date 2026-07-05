@@ -90,4 +90,16 @@ backbone_presets = {
         },
         "kaggle_handle": "kaggle://keras/clip/keras/clip_vit_bigg_14_laion2b_39b_b160k/3",
     },
+    "clip_vit_large_patch14_long_sae": {
+        "metadata": {
+            "description": (
+                "428 million parameter, 24-layer for vision and 12-layer for "
+                "text, patch size of 14, Long-CLIP model with a 248-token text "
+                "context and SAE-informed fine-tuning."
+            ),
+            "params": 427748098,
+            "path": "clip",
+        },
+        "kaggle_handle": "kaggle://keras/clip/keras/clip_vit_large_patch14_long_sae/1",
+    },
 }
