@@ -97,6 +97,7 @@ class BLIP2BackboneTest(TestCase):
         self.assertEqual(backbone.qformer.hidden_dim, self.hidden_dim)
         self.assertEqual(backbone.language_model.hidden_dim, self.hidden_dim)
 
+    @pytest.mark.large
     def test_saved_model(self):
         self.run_model_saving_test(
             cls=BLIP2Backbone,

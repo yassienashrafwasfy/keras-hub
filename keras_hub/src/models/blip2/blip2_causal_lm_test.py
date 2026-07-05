@@ -260,6 +260,7 @@ class BLIP2CausalLMTest(TestCase):
             "Long prompt slot misaligned after padding",
         )
 
+    @pytest.mark.large
     def test_saved_model(self):
         self.run_model_saving_test(
             cls=BLIP2CausalLM,
@@ -268,6 +269,7 @@ class BLIP2CausalLMTest(TestCase):
             atol=5e-3,
         )
 
+    @pytest.mark.large
     def test_text_saved_model(self):
         self.run_model_saving_test(
             cls=BLIP2CausalLM,

@@ -108,6 +108,7 @@ class BLIP2Seq2SeqLMTest(TestCase):
         seq_2_seq_lm.compile(sampler="top_k")
         seq_2_seq_lm.generate(prompt, max_length=8)
 
+    @pytest.mark.large
     def test_saved_model(self):
         self.run_model_saving_test(
             cls=BLIP2Seq2SeqLM,
