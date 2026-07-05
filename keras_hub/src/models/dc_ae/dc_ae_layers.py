@@ -458,10 +458,12 @@ class DCDownBlock2d(keras.layers.Layer):
         return x
 
     def compute_output_shape(self, input_shape):
+        # Spatial is halved either way: the `pixel_unshuffle` path
+        # (`downsample=True`) unshuffles by `factor`, while the `Conv` path
+        # (`downsample=False`) uses a stride-`factor` conv.
         b, h, w, _ = input_shape
-        if self.downsample:
-            h = None if h is None else h // self.factor
-            w = None if w is None else w // self.factor
+        h = None if h is None else h // self.factor
+        w = None if w is None else w // self.factor
         return (b, h, w, self.out_channels)
 
 
