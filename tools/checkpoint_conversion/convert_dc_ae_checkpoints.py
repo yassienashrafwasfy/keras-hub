@@ -41,6 +41,34 @@ PRESET_MAP = {
         "scale": 0.3189,
         # 32x compression; a 512x512 image becomes a 16x16x32 latent.
         "image_size": 512,
+        # The `DCAEBackbone` defaults already match `dc-ae-f32c32-in-1.0`.
+        "backbone_kwargs": {},
+    },
+    # DC-AE-Lite: the distilled variant. Shares the `sana-1.1` encoder but
+    # replaces the decoder's `EfficientViTBlock`s with plain `ResBlock`s (no
+    # attention) for faster, cheaper decoding, keeping the same 16x16x32 latent.
+    "dc_ae_lite_f32c32_sana_1.1": {
+        "root": "hf://mit-han-lab/dc-ae-lite-f32c32-sana-1.1-diffusers",
+        "weights": "diffusion_pytorch_model.safetensors",
+        "scale": 0.41407,
+        # 32x compression; any multiple of 32 works, 512 keeps validation cheap.
+        "image_size": 512,
+        "backbone_kwargs": {
+            # Encoder (identical to `dc-ae-f32c32-sana-1.1`). The diffusers
+            # `downsample_block_type` "Conv" maps to `downsample=False` (a
+            # stride-2 conv) in the layers.
+            "encoder_layers_per_block": (2, 2, 2, 3, 3, 3),
+            "encoder_qkv_multiscales": ((), (), (), (5,), (5,), (5,)),
+            "downsample_block_type": "Conv",
+            # Decoder: all `ResBlock` (distillation removes decoder attention).
+            "decoder_block_types": ("ResBlock",) * 6,
+            "decoder_layers_per_block": (0, 3, 5, 4, 4, 4),
+            "decoder_qkv_multiscales": ((), (), (), (), (), ()),
+            "decoder_norm_types": ("rms_norm",) * 6,
+            "decoder_act_fns": ("silu",) * 6,
+            "decoder_conv_act_fn": "silu",
+            "upsample_block_type": "pixel_shuffle",
+        },
     },
 }
 
@@ -60,12 +88,12 @@ flags.DEFINE_string(
 def convert_model(preset):
     config = PRESET_MAP[preset]
     image_size = config["image_size"]
-    # The defaults of `DCAEBackbone` already match `dc-ae-f32c32-in-1.0`.
     return DCAEBackbone(
         scale=config["scale"],
         image_shape=(image_size, image_size, 3),
         dtype="float32",
         name="dc_ae_backbone",
+        **config.get("backbone_kwargs", {}),
     )
 
 

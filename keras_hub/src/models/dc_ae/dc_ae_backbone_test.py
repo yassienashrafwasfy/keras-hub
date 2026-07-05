@@ -41,6 +41,39 @@ class DCAEBackboneTest(TestCase):
             tuple(reconstructed.shape), (2, self.height, self.width, 3)
         )
 
+    def test_lite_encode_decode(self):
+        # Mirror the `dc-ae-lite-f32c32-sana-1.1` shape at tiny channels to
+        # exercise the branches the default (`in-1.0`-style) config does not:
+        # the stride-2 `Conv` downsample, multiscale linear attention, a
+        # plain-`Conv` `conv_in` (first stage has layers > 0), and an
+        # all-`ResBlock` decoder.
+        init_kwargs = {
+            "in_channels": 3,
+            "latent_channels": 8,
+            "attention_head_dim": 8,
+            "encoder_block_out_channels": (8, 16, 32, 32, 64, 64),
+            "decoder_block_out_channels": (8, 16, 32, 32, 64, 64),
+            "encoder_layers_per_block": (2, 2, 2, 3, 3, 3),
+            "encoder_qkv_multiscales": ((), (), (), (1,), (1,), (1,)),
+            "downsample_block_type": "Conv",
+            "decoder_block_types": ("ResBlock",) * 6,
+            "decoder_layers_per_block": (0, 3, 5, 4, 4, 4),
+            "decoder_qkv_multiscales": ((), (), (), (), (), ()),
+            "decoder_norm_types": ("rms_norm",) * 6,
+            "decoder_act_fns": ("silu",) * 6,
+            "decoder_conv_act_fn": "silu",
+            "upsample_block_type": "pixel_shuffle",
+            "image_shape": (self.height, self.width, 3),
+        }
+        backbone = DCAEBackbone(**init_kwargs)
+        latents = backbone.encode(self.input_data)
+        # 64 // 32 = 2 spatial, 8 latent channels.
+        self.assertEqual(tuple(latents.shape), (2, 2, 2, 8))
+        reconstructed = backbone.decode(latents)
+        self.assertEqual(
+            tuple(reconstructed.shape), (2, self.height, self.width, 3)
+        )
+
     @pytest.mark.large
     def test_saved_model(self):
         self.run_model_saving_test(

@@ -300,11 +300,17 @@ class SanaMultiscaleLinearAttention(keras.layers.Layer):
             multi_scale_qkv.append(projection(qkv))
         qkv = ops.concatenate(multi_scale_qkv, axis=-1)
 
+        # Each multiscale projection appends another `3 * inner_dim` block, so
+        # the base heads are repeated `1 + num_scales` times (diffusers treats
+        # the appended scales as additional heads).
+        total_heads = self.num_heads * len(multi_scale_qkv)
+        total_inner = self.inner_dim * len(multi_scale_qkv)
+
         # Mimic the channels-first reshape in diffusers:
         # (B, H, W, C_total) -> (B, C_total, N) -> (B, heads, 3 * head_dim, N).
         qkv = ops.reshape(qkv, (b, n, qkv.shape[-1]))
         qkv = ops.transpose(qkv, (0, 2, 1))
-        qkv = ops.reshape(qkv, (b, self.num_heads, 3 * head_dim, n))
+        qkv = ops.reshape(qkv, (b, total_heads, 3 * head_dim, n))
         query, key, value = ops.split(qkv, 3, axis=2)
         query = self.nonlinearity(query)
         key = self.nonlinearity(key)
@@ -318,9 +324,9 @@ class SanaMultiscaleLinearAttention(keras.layers.Layer):
         else:
             hidden = self._quadratic_attention(query, key, value)
 
-        hidden = ops.reshape(hidden, (b, self.inner_dim, n))
+        hidden = ops.reshape(hidden, (b, total_inner, n))
         hidden = ops.transpose(hidden, (0, 2, 1))
-        hidden = ops.reshape(hidden, (b, height, width, self.inner_dim))
+        hidden = ops.reshape(hidden, (b, height, width, total_inner))
 
         hidden = self.to_out(hidden)
         hidden = self.norm_out(hidden)
