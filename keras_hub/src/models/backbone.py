@@ -122,6 +122,7 @@ class Backbone(keras.Model):
         cls,
         preset,
         load_weights=True,
+        sharding=None,
         **kwargs,
     ):
         """Instantiate a `keras_hub.models.Backbone` from a model preset.
@@ -151,6 +152,12 @@ class Backbone(keras.Model):
             load_weights: bool. If `True`, the weights will be loaded into the
                 model architecture. If `False`, the weights will be randomly
                 initialized.
+            sharding: optional. Either the string `"auto"` or a
+                `keras.distribution.Distribution` instance. If `"auto"`, the
+                model weights are automatically sharded across all available
+                accelerators with
+                `keras_hub.distribution.AutoModelParallel`. JAX backend
+                only.
 
         Examples:
         ```python
@@ -174,7 +181,23 @@ class Backbone(keras.Model):
                 f"a subclass of calling class `{cls.__name__}`. Call "
                 f"`from_preset` directly on `{backbone_cls.__name__}` instead."
             )
-        return loader.load_backbone(backbone_cls, load_weights, **kwargs)
+        if sharding is None:
+            return loader.load_backbone(backbone_cls, load_weights, **kwargs)
+        if sharding == "auto":
+            from keras_hub.src.distribution.auto_model_parallel import (
+                AutoModelParallel,
+            )
+
+            sharding = AutoModelParallel()
+        distribution_cls = keras.src.distribution.distribution_lib.Distribution
+        if not isinstance(sharding, distribution_cls):
+            raise ValueError(
+                "`sharding` must be `None`, `'auto'`, or a "
+                "`keras.distribution.Distribution` instance. "
+                f"Received: sharding={sharding}"
+            )
+        with sharding.scope():
+            return loader.load_backbone(backbone_cls, load_weights, **kwargs)
 
     def save_to_preset(self, preset_dir, max_shard_size=10):
         """Save backbone to a preset directory.
