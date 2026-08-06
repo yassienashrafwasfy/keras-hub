@@ -40,6 +40,7 @@ class TestTask(TestCase):
         self.assertEqual(text_encoder.max_sequence_length, 248)
         self.assertEqual(vision_encoder.image_shape, (224, 224, 3))
         self.assertEqual(vision_encoder.num_layers, 24)
+
     @pytest.mark.extra_large
     def test_convert_tiny_preset(self):
         model = CLIPBackbone.from_preset(

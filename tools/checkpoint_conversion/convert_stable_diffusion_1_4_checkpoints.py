@@ -220,8 +220,12 @@ def convert_weights(preset, keras_model):
                     layer.num_heads,
                     layer.hidden_dim,
                 )
-                port_ln_or_gn(loader, layer.layer_norm_1, f"{prefix}.layer_norm1")
-                port_ln_or_gn(loader, layer.layer_norm_2, f"{prefix}.layer_norm2")
+                port_ln_or_gn(
+                    loader, layer.layer_norm_1, f"{prefix}.layer_norm1"
+                )
+                port_ln_or_gn(
+                    loader, layer.layer_norm_2, f"{prefix}.layer_norm2"
+                )
                 port_dense(loader, layer.dense_1, f"{prefix}.mlp.fc1")
                 port_dense(loader, layer.dense_2, f"{prefix}.mlp.fc2")
             port_ln_or_gn(

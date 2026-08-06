@@ -81,9 +81,7 @@ def convert_backbone_config(transformers_config):
             num_heads=text_config["num_attention_heads"],
             intermediate_dim=text_config["intermediate_size"],
             intermediate_activation=text_config.get("hidden_act", "quick_gelu"),
-            max_sequence_length=text_config.get(
-                "max_position_embeddings", 77
-            ),
+            max_sequence_length=text_config.get("max_position_embeddings", 77),
         ),
         "projection_dim": projection_dim,
     }
