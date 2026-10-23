@@ -24,8 +24,7 @@ class TestTask(TestCase):
 
     @pytest.mark.extra_large
     def test_class_detection(self):
-        model = Backbone.from_preset(
+        self.run_hf_class_test(
             "hf://facebook/metaclip-2-worldwide-huge-quickgelu",
-            load_weights=False,
+            {Backbone: MetaCLIP2Backbone},
         )
-        self.assertIsInstance(model, MetaCLIP2Backbone)

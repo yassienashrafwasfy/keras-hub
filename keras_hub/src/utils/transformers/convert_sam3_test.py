@@ -36,17 +36,13 @@ class SAM3ConverterTest(TestCase):
 
     @pytest.mark.extra_large
     def test_class_detection(self):
-        preset_name = "hf://facebook/sam3"
-        model = ImageSegmenter.from_preset(
-            preset_name,
-            load_weights=False,
+        self.run_hf_class_test(
+            "hf://facebook/sam3",
+            {
+                ImageSegmenter: SAM3PromptableConceptImageSegmenter,
+                Backbone: SAM3PromptableConceptBackbone,
+            },
         )
-        self.assertIsInstance(model, SAM3PromptableConceptImageSegmenter)
-        model = Backbone.from_preset(
-            preset_name,
-            load_weights=False,
-        )
-        self.assertIsInstance(model, SAM3PromptableConceptBackbone)
 
     def test_convert_backbone_config_rope_theta(self):
         # transformers < 5 format

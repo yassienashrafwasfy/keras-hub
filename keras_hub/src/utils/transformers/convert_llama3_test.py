@@ -17,16 +17,10 @@ class TestTask(TestCase):
 
     @pytest.mark.large
     def test_class_detection(self):
-        model = CausalLM.from_preset(
+        self.run_hf_class_test(
             "hf://ariG23498/tiny-llama3-test",
-            load_weights=False,
+            {CausalLM: Llama3CausalLM, Backbone: Llama3Backbone},
         )
-        self.assertIsInstance(model, Llama3CausalLM)
-        model = Backbone.from_preset(
-            "hf://ariG23498/tiny-llama3-test",
-            load_weights=False,
-        )
-        self.assertIsInstance(model, Llama3Backbone)
 
     def test_convert_backbone_config_rope_theta(self):
         # transformers < 5 format

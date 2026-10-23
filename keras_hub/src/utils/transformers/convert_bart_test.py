@@ -16,15 +16,9 @@ class TestTask(TestCase):
 
     @pytest.mark.large
     def test_class_detection(self):
-        model = Seq2SeqLM.from_preset(
+        self.run_hf_class_test(
             "hf://cosmo3769/tiny-bart-test",
-            load_weights=False,
+            {Seq2SeqLM: BartSeq2SeqLM, Backbone: BartBackbone},
         )
-        self.assertIsInstance(model, BartSeq2SeqLM)
-        model = Backbone.from_preset(
-            "hf://cosmo3769/tiny-bart-test",
-            load_weights=False,
-        )
-        self.assertIsInstance(model, BartBackbone)
 
     # TODO: compare numerics with huggingface model

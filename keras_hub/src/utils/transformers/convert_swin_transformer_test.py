@@ -23,13 +23,10 @@ class TestSwinTransformerConverter(TestCase):
 
     @pytest.mark.extra_large
     def test_class_detection(self):
-        model = ImageClassifier.from_preset(
+        self.run_hf_class_test(
             "hf://microsoft/swin-tiny-patch4-window7-224",
-            load_weights=False,
+            {
+                ImageClassifier: SwinTransformerImageClassifier,
+                Backbone: SwinTransformerBackbone,
+            },
         )
-        self.assertIsInstance(model, SwinTransformerImageClassifier)
-        model = Backbone.from_preset(
-            "hf://microsoft/swin-tiny-patch4-window7-224",
-            load_weights=False,
-        )
-        self.assertIsInstance(model, SwinTransformerBackbone)

@@ -20,16 +20,10 @@ class TestMixtralConverter(TestCase):
 
     @pytest.mark.large
     def test_class_detection(self):
-        model = CausalLM.from_preset(
+        self.run_hf_class_test(
             "hf://hf-internal-testing/tiny-random-MixtralForCausalLM",
-            load_weights=False,
+            {CausalLM: MixtralCausalLM, Backbone: MixtralBackbone},
         )
-        self.assertIsInstance(model, MixtralCausalLM)
-        model = Backbone.from_preset(
-            "hf://hf-internal-testing/tiny-random-MixtralForCausalLM",
-            load_weights=False,
-        )
-        self.assertIsInstance(model, MixtralBackbone)
 
     def test_mixtral_rope_theta(self):
         # transformers < 5 format

@@ -9,19 +9,17 @@ from keras_hub.src.utils.transformers import convert_gemma3n
 class TestGemma3nConverter(TestCase):
     @pytest.mark.extra_large
     def test_convert_tiny_preset(self):
-        model = Gemma3nBackbone.from_preset(
+        self.run_hf_class_test(
             "hf://yujiepan/gemma-3n-tiny-random-dim4",
-            load_weights=False,
+            {Gemma3nBackbone: Gemma3nBackbone},
         )
-        self.assertIsInstance(model, Gemma3nBackbone)
 
     @pytest.mark.large
     def test_class_detection(self):
-        model = Backbone.from_preset(
+        self.run_hf_class_test(
             "hf://yujiepan/gemma-3n-tiny-random-dim4",
-            load_weights=False,
+            {Backbone: Gemma3nBackbone},
         )
-        self.assertIsInstance(model, Gemma3nBackbone)
 
     def test_gemma3n_rope_theta(self):
         # transformers < 5 format

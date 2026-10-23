@@ -19,13 +19,7 @@ class TestDeiTConverter(TestCase):
 
     @pytest.mark.extra_large
     def test_class_detection(self):
-        model = ImageClassifier.from_preset(
+        self.run_hf_class_test(
             "hf://facebook/deit-base-distilled-patch16-384",
-            load_weights=False,
+            {ImageClassifier: DeiTImageClassifier, Backbone: DeiTBackbone},
         )
-        self.assertIsInstance(model, DeiTImageClassifier)
-        model = Backbone.from_preset(
-            "hf://facebook/deit-base-distilled-patch16-384",
-            load_weights=False,
-        )
-        self.assertIsInstance(model, DeiTBackbone)

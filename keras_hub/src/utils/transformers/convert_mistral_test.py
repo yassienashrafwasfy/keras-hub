@@ -82,16 +82,10 @@ class TestTask(TestCase):
 
     @pytest.mark.large
     def test_class_detection(self):
-        model = CausalLM.from_preset(
+        self.run_hf_class_test(
             "hf://cosmo3769/tiny-mistral-test",
-            load_weights=False,
+            {CausalLM: MistralCausalLM, Backbone: MistralBackbone},
         )
-        self.assertIsInstance(model, MistralCausalLM)
-        model = Backbone.from_preset(
-            "hf://cosmo3769/tiny-mistral-test",
-            load_weights=False,
-        )
-        self.assertIsInstance(model, MistralBackbone)
 
     @pytest.mark.large
     def test_explicit_head_dim_matches_hf(self):

@@ -20,12 +20,11 @@ class TestDINOV2Converter(TestCase):
 
     @pytest.mark.extra_large
     def test_class_detection(self):
-        model = Backbone.from_preset(
+        self.run_hf_class_test(
             "hf://facebook/dinov2-small",
+            {Backbone: DINOV2Backbone},
             image_shape=(224, 224, 3),
-            load_weights=False,
         )
-        self.assertIsInstance(model, DINOV2Backbone)
 
     def test_convert_backbone_config_with_registers(self):
         base_config = {

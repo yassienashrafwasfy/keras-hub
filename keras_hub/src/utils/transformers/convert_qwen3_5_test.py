@@ -9,19 +9,17 @@ from keras_hub.src.utils.transformers import convert_qwen3_5
 class TestQwen3_5Converter(TestCase):
     @pytest.mark.extra_large
     def test_convert_tiny_preset(self):
-        model = Qwen3_5Backbone.from_preset(
+        self.run_hf_class_test(
             "hf://yujiepan/qwen3.5-tiny-random",
-            load_weights=False,
+            {Qwen3_5Backbone: Qwen3_5Backbone},
         )
-        self.assertIsInstance(model, Qwen3_5Backbone)
 
     @pytest.mark.large
     def test_class_detection(self):
-        model = Backbone.from_preset(
+        self.run_hf_class_test(
             "hf://yujiepan/qwen3.5-tiny-random",
-            load_weights=False,
+            {Backbone: Qwen3_5Backbone},
         )
-        self.assertIsInstance(model, Qwen3_5Backbone)
 
     def test_qwen3_5_rope_theta(self):
         # transformers < 5 format

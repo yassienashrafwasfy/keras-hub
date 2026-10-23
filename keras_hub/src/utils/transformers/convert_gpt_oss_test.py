@@ -17,17 +17,10 @@ class TestTask(TestCase):
 
     @pytest.mark.extra_large
     def test_class_detection(self):
-        preset_name = "gpt_oss_20b_en"
-        model = CausalLM.from_preset(
-            preset_name,
-            load_weights=False,
+        self.run_hf_class_test(
+            "gpt_oss_20b_en",
+            {CausalLM: GptOssCausalLM, Backbone: GptOssBackbone},
         )
-        self.assertIsInstance(model, GptOssCausalLM)
-        model = Backbone.from_preset(
-            preset_name,
-            load_weights=False,
-        )
-        self.assertIsInstance(model, GptOssBackbone)
 
     def test_convert_backbone_config_rope_theta(self):
         # transformers < 5 format

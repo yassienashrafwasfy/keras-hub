@@ -23,16 +23,10 @@ class TestSmollm3Converter(TestCase):
 
     @pytest.mark.extra_large
     def test_class_detection(self):
-        model = CausalLM.from_preset(
+        self.run_hf_class_test(
             "hf://HuggingFaceTB/SmolLM3-3B",
-            load_weights=False,
+            {CausalLM: SmolLM3CausalLM, Backbone: SmolLM3Backbone},
         )
-        self.assertIsInstance(model, SmolLM3CausalLM)
-        model = Backbone.from_preset(
-            "hf://HuggingFaceTB/SmolLM3-3B",
-            load_weights=False,
-        )
-        self.assertIsInstance(model, SmolLM3Backbone)
 
     def test_convert_backbone_config_rope_theta(self):
         # transformers < 5 format

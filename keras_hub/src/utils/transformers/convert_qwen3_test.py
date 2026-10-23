@@ -19,19 +19,17 @@ class TestQwen3Converter(TestCase):
 
     @pytest.mark.extra_large
     def test_convert_tiny_preset(self):
-        model = Qwen3Backbone.from_preset(
+        self.run_hf_class_test(
             "hf://yujiepan/qwen3-tiny-random",
-            load_weights=False,
+            {Qwen3Backbone: Qwen3Backbone},
         )
-        self.assertIsInstance(model, Qwen3Backbone)
 
     @pytest.mark.large
     def test_class_detection(self):
-        model = Backbone.from_preset(
+        self.run_hf_class_test(
             "hf://yujiepan/qwen3-tiny-random",
-            load_weights=False,
+            {Backbone: Qwen3Backbone},
         )
-        self.assertIsInstance(model, Qwen3Backbone)
 
     def test_qwen3_rope_theta(self):
         # transformers < 5 format

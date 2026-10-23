@@ -90,17 +90,13 @@ class ConvertEmbeddingGemma2Test(TestCase):
 
     @pytest.mark.large
     def test_class_detection(self):
-        preset_name = "hf://google/embeddinggemma-2"
-        model = TextEmbedder.from_preset(
-            preset_name,
-            load_weights=False,
+        self.run_hf_class_test(
+            "hf://google/embeddinggemma-2",
+            {
+                TextEmbedder: EmbeddingGemma2TextEmbedder,
+                Backbone: EmbeddingGemma2Backbone,
+            },
         )
-        self.assertIsInstance(model, EmbeddingGemma2TextEmbedder)
-        model = Backbone.from_preset(
-            preset_name,
-            load_weights=False,
-        )
-        self.assertIsInstance(model, EmbeddingGemma2Backbone)
 
     def test_audio_input_feat_size_follows_conv_channels(self):
         # HF sizes the SSCP projection as

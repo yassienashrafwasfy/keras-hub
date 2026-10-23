@@ -27,17 +27,10 @@ class TestTask(TestCase):
 
     @pytest.mark.extra_large
     def test_class_detection(self):
-        preset_name = "hf://harshaljanjani/tiny-t5gemma-test"
-        model = Seq2SeqLM.from_preset(
-            preset_name,
-            load_weights=False,
+        self.run_hf_class_test(
+            "hf://harshaljanjani/tiny-t5gemma-test",
+            {Seq2SeqLM: T5GemmaSeq2SeqLM, Backbone: T5GemmaBackbone},
         )
-        self.assertIsInstance(model, T5GemmaSeq2SeqLM)
-        model = Backbone.from_preset(
-            preset_name,
-            load_weights=False,
-        )
-        self.assertIsInstance(model, T5GemmaBackbone)
 
 
 class TestT5GemmaRopeTheta(TestCase):

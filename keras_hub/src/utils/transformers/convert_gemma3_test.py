@@ -26,14 +26,7 @@ class TestTask(TestCase):
 
     @pytest.mark.extra_large
     def test_class_detection(self):
-        preset_name = "google/gemma-3-1b-it"
-        model = CausalLM.from_preset(
-            preset_name,
-            load_weights=False,
+        self.run_hf_class_test(
+            "google/gemma-3-1b-it",
+            {CausalLM: Gemma3CausalLM, Backbone: Gemma3Backbone},
         )
-        self.assertIsInstance(model, Gemma3CausalLM)
-        model = Backbone.from_preset(
-            preset_name,
-            load_weights=False,
-        )
-        self.assertIsInstance(model, Gemma3Backbone)

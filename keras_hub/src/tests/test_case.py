@@ -1500,6 +1500,16 @@ class TestCase(tf.test.TestCase, parameterized.TestCase):
             output = ops.argmax(output, axis=-1)
             self.assertAllEqual(output, expected_labels)
 
+    def run_hf_class_test(self, preset, expected_classes, **kwargs):
+        """Check `from_preset` on a checkpoint returns the right class.
+
+        `expected_classes` maps each class whose `from_preset` is called
+        to the class the loaded instance must be an instance of.
+        """
+        for base_cls, expected_cls in expected_classes.items():
+            model = base_cls.from_preset(preset, load_weights=False, **kwargs)
+            self.assertIsInstance(model, expected_cls)
+
     def get_test_data_dir(self):
         return str(pathlib.Path(__file__).parent / "test_data")
 

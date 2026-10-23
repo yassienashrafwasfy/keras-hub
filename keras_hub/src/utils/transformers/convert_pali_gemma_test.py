@@ -24,15 +24,9 @@ class TestTask(TestCase):
 
     @pytest.mark.large
     def test_class_detection(self):
-        model = CausalLM.from_preset(
+        self.run_hf_class_test(
             "hf://ariG23498/tiny-pali-gemma-test",
-            load_weights=False,
+            {CausalLM: PaliGemmaCausalLM, Backbone: PaliGemmaBackbone},
         )
-        self.assertIsInstance(model, PaliGemmaCausalLM)
-        model = Backbone.from_preset(
-            "hf://ariG23498/tiny-pali-gemma-test",
-            load_weights=False,
-        )
-        self.assertIsInstance(model, PaliGemmaBackbone)
 
     # TODO: compare numerics with huggingface model

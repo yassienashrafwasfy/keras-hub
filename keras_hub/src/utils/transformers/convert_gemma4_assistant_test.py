@@ -23,14 +23,7 @@ class TestGemma4AssistantConverter(TestCase):
 
     @pytest.mark.extra_large
     def test_class_detection(self):
-        preset_name = "hf://yujiepan/gemma-4-assistant-tiny-random"
-        model = CausalLM.from_preset(
-            preset_name,
-            load_weights=False,
+        self.run_hf_class_test(
+            "hf://yujiepan/gemma-4-assistant-tiny-random",
+            {CausalLM: Gemma4AssistantCausalLM, Backbone: Gemma4Backbone},
         )
-        self.assertIsInstance(model, Gemma4AssistantCausalLM)
-        model = Backbone.from_preset(
-            preset_name,
-            load_weights=False,
-        )
-        self.assertIsInstance(model, Gemma4Backbone)

@@ -24,17 +24,10 @@ class TestT5Gemma2Converter(TestCase):
 
     @pytest.mark.extra_large
     def test_class_detection(self):
-        preset_name = "hf://google/t5gemma-2-270m-270m"
-        model = Seq2SeqLM.from_preset(
-            preset_name,
-            load_weights=False,
+        self.run_hf_class_test(
+            "hf://google/t5gemma-2-270m-270m",
+            {Seq2SeqLM: T5Gemma2Seq2SeqLM, Backbone: T5Gemma2Backbone},
         )
-        self.assertIsInstance(model, T5Gemma2Seq2SeqLM)
-        model = Backbone.from_preset(
-            preset_name,
-            load_weights=False,
-        )
-        self.assertIsInstance(model, T5Gemma2Backbone)
 
     def test_convert_backbone_config_rope_theta(self):
         # transformers < 5 format (flat)

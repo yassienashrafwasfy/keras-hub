@@ -25,17 +25,10 @@ class TestTask(TestCase):
 
     @pytest.mark.extra_large
     def test_class_detection(self):
-        preset_name = "hf://Qwen/Qwen3-30B-A3B"
-        model = CausalLM.from_preset(
-            preset_name,
-            load_weights=False,
+        self.run_hf_class_test(
+            "hf://Qwen/Qwen3-30B-A3B",
+            {CausalLM: Qwen3MoeCausalLM, Backbone: Qwen3MoeBackbone},
         )
-        self.assertIsInstance(model, Qwen3MoeCausalLM)
-        model = Backbone.from_preset(
-            preset_name,
-            load_weights=False,
-        )
-        self.assertIsInstance(model, Qwen3MoeBackbone)
 
 
 class TestQwen3MoeRopeTheta(TestCase):

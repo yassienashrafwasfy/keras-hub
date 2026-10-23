@@ -10,16 +10,14 @@ from keras_hub.src.tests.test_case import TestCase
 class TestQwen3_5MoeConverter(TestCase):
     @pytest.mark.extra_large
     def test_convert_tiny_preset(self):
-        model = Qwen3_5MoeBackbone.from_preset(
+        self.run_hf_class_test(
             "hf://yujiepan/qwen3.5-moe-tiny-random",
-            load_weights=False,
+            {Qwen3_5MoeBackbone: Qwen3_5MoeBackbone},
         )
-        self.assertIsInstance(model, Qwen3_5MoeBackbone)
 
     @pytest.mark.large
     def test_class_detection(self):
-        model = Backbone.from_preset(
+        self.run_hf_class_test(
             "hf://yujiepan/qwen3.5-moe-tiny-random",
-            load_weights=False,
+            {Backbone: Qwen3_5MoeBackbone},
         )
-        self.assertIsInstance(model, Qwen3_5MoeBackbone)

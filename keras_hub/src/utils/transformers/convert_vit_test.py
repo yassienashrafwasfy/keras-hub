@@ -26,13 +26,7 @@ class TestViTConverter(TestCase):
 
     @pytest.mark.extra_large
     def test_class_detection(self):
-        model = ImageClassifier.from_preset(
+        self.run_hf_class_test(
             "hf://google/vit-base-patch16-224",
-            load_weights=False,
+            {ImageClassifier: ViTImageClassifier, Backbone: ViTBackbone},
         )
-        self.assertIsInstance(model, ViTImageClassifier)
-        model = Backbone.from_preset(
-            "hf://google/vit-base-patch16-224",
-            load_weights=False,
-        )
-        self.assertIsInstance(model, ViTBackbone)

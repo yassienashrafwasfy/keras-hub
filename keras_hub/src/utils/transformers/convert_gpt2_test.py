@@ -16,15 +16,9 @@ class TestTask(TestCase):
 
     @pytest.mark.large
     def test_class_detection(self):
-        model = CausalLM.from_preset(
+        self.run_hf_class_test(
             "hf://openai-community/gpt2",
-            load_weights=False,
+            {CausalLM: GPT2CausalLM, Backbone: GPT2Backbone},
         )
-        self.assertIsInstance(model, GPT2CausalLM)
-        model = Backbone.from_preset(
-            "hf://openai-community/gpt2",
-            load_weights=False,
-        )
-        self.assertIsInstance(model, GPT2Backbone)
 
     # TODO: compare numerics with huggingface model

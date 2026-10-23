@@ -16,8 +16,7 @@ class TestESMConverter(TestCase):
 
     @pytest.mark.large
     def test_class_detection(self):
-        model = Backbone.from_preset(
+        self.run_hf_class_test(
             "hf://facebook/esm2_t6_8M_UR50D",
-            load_weights=False,
+            {Backbone: ESMBackbone},
         )
-        self.assertIsInstance(model, ESMBackbone)
