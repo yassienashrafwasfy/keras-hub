@@ -2,10 +2,14 @@ import pytest
 from keras import ops
 
 from keras_hub.src.models.mistral.mistral_backbone import MistralBackbone
+from keras_hub.src.tests.test_case import BackboneTestMixin
 from keras_hub.src.tests.test_case import TestCase
 
 
-class MistralBackboneTest(TestCase):
+class MistralBackboneTest(BackboneTestMixin, TestCase):
+    backbone_cls = MistralBackbone
+    expected_output_shape = (2, 5, 16)
+
     def setUp(self):
         self.init_kwargs = {
             "vocabulary_size": 10,
@@ -20,22 +24,6 @@ class MistralBackboneTest(TestCase):
             "token_ids": ops.ones((2, 5), dtype="int32"),
             "padding_mask": ops.ones((2, 5), dtype="int32"),
         }
-
-    def test_backbone_basics(self):
-        self.run_backbone_test(
-            cls=MistralBackbone,
-            init_kwargs=self.init_kwargs,
-            input_data=self.input_data,
-            expected_output_shape=(2, 5, 16),
-        )
-
-    @pytest.mark.large
-    def test_saved_model(self):
-        self.run_model_saving_test(
-            cls=MistralBackbone,
-            init_kwargs=self.init_kwargs,
-            input_data=self.input_data,
-        )
 
     def test_num_parameters(self):
         model = MistralBackbone(**self.init_kwargs)

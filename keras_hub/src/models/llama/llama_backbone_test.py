@@ -3,10 +3,14 @@ import pytest
 from keras import ops
 
 from keras_hub.src.models.llama.llama_backbone import LlamaBackbone
+from keras_hub.src.tests.test_case import BackboneTestMixin
 from keras_hub.src.tests.test_case import TestCase
 
 
-class LlamaTest(TestCase):
+class LlamaTest(BackboneTestMixin, TestCase):
+    backbone_cls = LlamaBackbone
+    expected_output_shape = (2, 5, 8)
+
     def setUp(self):
         self.init_kwargs = {
             "vocabulary_size": 10,
@@ -20,22 +24,6 @@ class LlamaTest(TestCase):
             "token_ids": ops.ones((2, 5), dtype="int32"),
             "padding_mask": ops.ones((2, 5), dtype="int32"),
         }
-
-    def test_backbone_basics(self):
-        self.run_backbone_test(
-            cls=LlamaBackbone,
-            init_kwargs=self.init_kwargs,
-            input_data=self.input_data,
-            expected_output_shape=(2, 5, 8),
-        )
-
-    @pytest.mark.large
-    def test_saved_model(self):
-        self.run_model_saving_test(
-            cls=LlamaBackbone,
-            init_kwargs=self.init_kwargs,
-            input_data=self.input_data,
-        )
 
     def test_num_parameters(self):
         model = LlamaBackbone(**self.init_kwargs)

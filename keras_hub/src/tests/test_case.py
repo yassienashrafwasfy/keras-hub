@@ -9,6 +9,7 @@ from unittest.mock import patch
 import grain
 import keras
 import numpy as np
+import pytest
 import tensorflow as tf
 from absl.testing import parameterized
 from keras import ops
@@ -158,6 +159,31 @@ def assert_grain_safe_types(x):
         )
 
     tree.map_structure(check, x)
+
+
+class BackboneTestMixin:
+    """Standard backbone tests, driven by class attributes.
+
+    Subclasses (alongside `TestCase`) set `backbone_cls` and
+    `expected_output_shape`, and define `self.init_kwargs` and
+    `self.input_data` in `setUp`.
+    """
+
+    def test_backbone_basics(self):
+        self.run_backbone_test(
+            cls=self.backbone_cls,
+            init_kwargs=self.init_kwargs,
+            input_data=self.input_data,
+            expected_output_shape=self.expected_output_shape,
+        )
+
+    @pytest.mark.large
+    def test_saved_model(self):
+        self.run_model_saving_test(
+            cls=self.backbone_cls,
+            init_kwargs=self.init_kwargs,
+            input_data=self.input_data,
+        )
 
 
 class TestCase(tf.test.TestCase, parameterized.TestCase):

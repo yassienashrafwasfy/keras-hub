@@ -2,10 +2,14 @@ import pytest
 from keras import ops
 
 from keras_hub.src.models.opt.opt_backbone import OPTBackbone
+from keras_hub.src.tests.test_case import BackboneTestMixin
 from keras_hub.src.tests.test_case import TestCase
 
 
-class OPTBackboneTest(TestCase):
+class OPTBackboneTest(BackboneTestMixin, TestCase):
+    backbone_cls = OPTBackbone
+    expected_output_shape = (2, 5, 2)
+
     def setUp(self):
         self.init_kwargs = {
             "vocabulary_size": 10,
@@ -19,22 +23,6 @@ class OPTBackboneTest(TestCase):
             "token_ids": ops.ones((2, 5), dtype="int32"),
             "padding_mask": ops.ones((2, 5), dtype="int32"),
         }
-
-    def test_backbone_basics(self):
-        self.run_backbone_test(
-            cls=OPTBackbone,
-            init_kwargs=self.init_kwargs,
-            input_data=self.input_data,
-            expected_output_shape=(2, 5, 2),
-        )
-
-    @pytest.mark.large
-    def test_saved_model(self):
-        self.run_model_saving_test(
-            cls=OPTBackbone,
-            init_kwargs=self.init_kwargs,
-            input_data=self.input_data,
-        )
 
     @pytest.mark.extra_large
     def test_smallest_preset(self):
