@@ -610,6 +610,94 @@ class TestCase(tf.test.TestCase, parameterized.TestCase):
         restored_output = restored_model(input_data)
         self.assertAllClose(model_output, restored_output, atol=atol, rtol=rtol)
 
+    def run_lora_test(
+        self,
+        cls,
+        init_kwargs,
+        input_data,
+        rank=4,
+        target_layer_names=None,
+        expected_num_trainable_weights=None,
+        expected_num_non_trainable_weights=None,
+    ):
+        """Run LoRA fine-tuning and LoRA weight save/load checks."""
+        lora_kwargs = {"target_layer_names": target_layer_names}
+
+        # Fine-tune, then round trip through the full weights file.
+        backbone = cls(**init_kwargs)
+        targets = np.random.normal(size=backbone(input_data).shape)
+        backbone.enable_lora(rank, **lora_kwargs)
+        if expected_num_trainable_weights is not None:
+            self.assertLen(
+                backbone.trainable_weights, expected_num_trainable_weights
+            )
+        else:
+            self.assertGreater(len(backbone.trainable_weights), 0)
+        if expected_num_non_trainable_weights is not None:
+            self.assertLen(
+                backbone.non_trainable_weights,
+                expected_num_non_trainable_weights,
+            )
+        else:
+            self.assertGreater(len(backbone.non_trainable_weights), 0)
+        backbone.compile(optimizer="sgd", loss="mse")
+        backbone.fit(input_data, targets, epochs=1)
+        weights_path = os.path.join(
+            self.get_temp_dir(), "lora_model.weights.h5"
+        )
+        backbone.save_weights(weights_path)
+        new_backbone = cls(**init_kwargs)
+        new_backbone.load_weights(weights_path)
+        self.assertAllClose(backbone(input_data), new_backbone(input_data))
+
+        # Restore only the LoRA weights on top of the base weights.
+        backbone = cls(**init_kwargs)
+        base_path = os.path.join(self.get_temp_dir(), "base.weights.h5")
+        backbone.save_weights(base_path)
+        backbone.enable_lora(rank, **lora_kwargs)
+        backbone.compile(optimizer="sgd", loss="mse")
+        backbone.fit(input_data, targets, epochs=1)
+        lora_path = os.path.join(self.get_temp_dir(), "lora_model.lora.h5")
+        backbone.save_lora_weights(lora_path)
+        new_backbone = cls(**init_kwargs)
+        new_backbone.load_weights(base_path)
+        new_backbone.enable_lora(rank, **lora_kwargs)
+        new_backbone.load_lora_weights(lora_path)
+        self.assertAllClose(backbone(input_data), new_backbone(input_data))
+
+        # Check the error paths.
+        backbone = cls(**init_kwargs)
+        with self.assertRaisesRegex(ValueError, "no lora-enabled layers"):
+            backbone.save_lora_weights(lora_path)
+        backbone.enable_lora(rank + 1, **lora_kwargs)
+        with self.assertRaisesRegex(ValueError, "ranks must match"):
+            backbone.load_lora_weights(lora_path)
+        with self.assertRaisesRegex(ValueError, "filename must end in"):
+            backbone.save_lora_weights("bad_filepath")
+
+    def run_lora_distribution_test(self, cls, init_kwargs, rank=4):
+        """Check LoRA weights stay unsharded under `ModelParallel`."""
+        if keras.backend.backend() != "jax":
+            self.skipTest("`ModelParallel` testing requires the Jax backend.")
+        devices = keras.distribution.list_devices("CPU")
+        if len(devices) == 1:
+            self.skipTest("`ModelParallel` testing requires multiple devices.")
+        device_mesh = keras.distribution.DeviceMesh(
+            shape=(1, len(devices)),
+            axis_names=("batch", "model"),
+            devices=devices,
+        )
+        layout_map = cls.get_layout_map(device_mesh)
+        distribution = keras.distribution.ModelParallel(layout_map=layout_map)
+        with distribution.scope():
+            model = cls(**init_kwargs)
+            model.enable_lora(rank=rank)
+
+        lora_weights = [w for w in model.weights if "lora_kernel" in w.path]
+        self.assertGreater(len(lora_weights), 0)
+        for w in lora_weights:
+            self.assertTrue(all(axis is None for axis in w.value.sharding.spec))
+
     def _verify_litert_outputs(
         self,
         keras_output,

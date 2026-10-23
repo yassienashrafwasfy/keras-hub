@@ -120,34 +120,6 @@ class LlamaTest(TestCase):
                 )
 
     def test_distribution_with_lora(self):
-        if keras.backend.backend() != "jax":
-            self.skipTest("`ModelParallel` testing requires the Jax backend.")
-        devices = keras.distribution.list_devices("CPU")
-        if len(devices) == 1:
-            # Need more than 1 device for distribution testing.
-            self.skipTest("`ModelParallel` testing requires multiple devices.")
-        device_mesh = keras.distribution.DeviceMesh(
-            shape=(1, len(devices)),
-            axis_names=("batch", "model"),
-            devices=devices,
+        self.run_lora_distribution_test(
+            cls=LlamaBackbone, init_kwargs=self.init_kwargs
         )
-
-        layout_map = LlamaBackbone.get_layout_map(device_mesh)
-        distribution = keras.distribution.ModelParallel(layout_map=layout_map)
-        with distribution.scope():
-            model = LlamaBackbone(**self.init_kwargs)
-            model.enable_lora(rank=4)
-
-        for w in model.weights:
-            if "self_attention/query/lora_kernel_a" in w.path:
-                self.assertEqual(
-                    tuple(w.value.sharding.spec), (None, None, None)
-                )
-            if "self_attention/query/lora_kernel_b" in w.path:
-                self.assertEqual(tuple(w.value.sharding.spec), (None, None))
-            if "self_attention/value/lora_kernel_a" in w.path:
-                self.assertEqual(
-                    tuple(w.value.sharding.spec), (None, None, None)
-                )
-            if "self_attention/value/lora_kernel_b" in w.path:
-                self.assertEqual(tuple(w.value.sharding.spec), (None, None))
