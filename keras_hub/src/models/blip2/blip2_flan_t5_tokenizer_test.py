@@ -36,12 +36,12 @@ class BLIP2FlanT5TokenizerTest(TestCase):
         self.assertEqual(tokenizer.pad_token, "<pad>")
 
     def test_errors_missing_special_tokens(self):
-        with self.assertRaises(ValueError):
-            BLIP2FlanT5Tokenizer(
-                proto=os.path.join(
-                    self.get_test_data_dir(), "no_special_token_vocab.spm"
-                )
-            )
+        self.run_missing_special_tokens_test(
+            BLIP2FlanT5Tokenizer,
+            proto=os.path.join(
+                self.get_test_data_dir(), "no_special_token_vocab.spm"
+            ),
+        )
 
     @pytest.mark.kaggle_key_required
     @pytest.mark.extra_large

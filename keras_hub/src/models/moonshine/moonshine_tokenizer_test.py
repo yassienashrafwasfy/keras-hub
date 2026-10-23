@@ -31,12 +31,12 @@ class MoonshineTokenizerTest(TestCase):
             self.assertIn(text.lower(), decoded.lower().strip())
 
     def test_errors_missing_special_tokens(self):
-        with self.assertRaises(ValueError):
-            MoonshineTokenizer(
-                proto=os.path.join(
-                    self.get_test_data_dir(), "no_special_token_vocab.spm"
-                )
-            )
+        self.run_missing_special_tokens_test(
+            MoonshineTokenizer,
+            proto=os.path.join(
+                self.get_test_data_dir(), "no_special_token_vocab.spm"
+            ),
+        )
 
     def test_serialization(self):
         instance = MoonshineTokenizer(**self.init_kwargs)

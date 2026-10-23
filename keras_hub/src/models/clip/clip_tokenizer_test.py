@@ -57,8 +57,9 @@ class CLIPTokenizerTest(TestCase):
         self.assertAllEqual(tokenizer.pad_token_id, tokenizer.end_token_id)
 
     def test_errors_missing_special_tokens(self):
-        with self.assertRaises(ValueError):
-            CLIPTokenizer(vocabulary={"foo": 0, "bar": 1}, merges=["fo o"])
+        self.run_missing_special_tokens_test(
+            CLIPTokenizer, vocabulary={"foo": 0, "bar": 1}, merges=["fo o"]
+        )
 
     @pytest.mark.extra_large
     def test_smallest_preset(self):

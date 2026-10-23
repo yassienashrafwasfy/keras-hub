@@ -27,13 +27,13 @@ class DebertaV3TokenizerTest(TestCase):
         )
 
     def test_errors_missing_special_tokens(self):
-        with self.assertRaises(ValueError):
-            DebertaV3Tokenizer(
-                # Generated using create_no_special_token_proto.py
-                proto=os.path.join(
-                    self.get_test_data_dir(), "no_special_token_vocab.spm"
-                )
-            )
+        self.run_missing_special_tokens_test(
+            DebertaV3Tokenizer,
+            # Generated using create_no_special_token_proto.py
+            proto=os.path.join(
+                self.get_test_data_dir(), "no_special_token_vocab.spm"
+            ),
+        )
 
     def test_mask_token_handling(self):
         tokenizer = DebertaV3Tokenizer(**self.init_kwargs)

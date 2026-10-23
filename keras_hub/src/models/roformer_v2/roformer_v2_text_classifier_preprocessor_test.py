@@ -41,7 +41,7 @@ class RoformerV2TextClassifierPreprocessorTest(TestCase):
         )
 
     def test_errors_for_2d_list_input(self):
-        preprocessor = RoformerV2TextClassifierPreprocessor(**self.init_kwargs)
-        ambiguous_input = [["one", "two"], ["three", "four"]]
-        with self.assertRaises(ValueError):
-            preprocessor(ambiguous_input)
+        self.run_ambiguous_input_test(
+            cls=RoformerV2TextClassifierPreprocessor,
+            init_kwargs=self.init_kwargs,
+        )

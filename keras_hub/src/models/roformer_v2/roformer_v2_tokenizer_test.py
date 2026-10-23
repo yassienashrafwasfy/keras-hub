@@ -36,5 +36,6 @@ class RoformerV2TokenizerTest(TestCase):
         self.assertAllEqual(output_data, expected_output)
 
     def test_errors_missing_special_tokens(self):
-        with self.assertRaises(ValueError):
-            RoformerV2Tokenizer(vocabulary=["a", "b", "c"])
+        self.run_missing_special_tokens_test(
+            RoformerV2Tokenizer, vocabulary=["a", "b", "c"]
+        )

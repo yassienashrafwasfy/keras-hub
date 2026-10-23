@@ -38,8 +38,9 @@ class FalconTokenizerTest(TestCase):
         )
 
     def test_errors_missing_special_tokens(self):
-        with self.assertRaises(ValueError):
-            FalconTokenizer(vocabulary=["a", "b", "c"], merges=[])
+        self.run_missing_special_tokens_test(
+            FalconTokenizer, vocabulary=["a", "b", "c"], merges=[]
+        )
 
     @pytest.mark.extra_large
     def test_smallest_preset(self):

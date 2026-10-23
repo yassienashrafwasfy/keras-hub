@@ -36,8 +36,9 @@ class BertTokenizerTest(TestCase):
         self.assertAllEqual(output_data, expected_output)
 
     def test_errors_missing_special_tokens(self):
-        with self.assertRaises(ValueError):
-            BertTokenizer(vocabulary=["a", "b", "c"])
+        self.run_missing_special_tokens_test(
+            BertTokenizer, vocabulary=["a", "b", "c"]
+        )
 
     @pytest.mark.extra_large
     def test_smallest_preset(self):

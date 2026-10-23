@@ -39,8 +39,9 @@ class Llama3TokenizerTest(TestCase):
         )
 
     def test_errors_missing_special_tokens(self):
-        with self.assertRaises(ValueError):
-            Llama3Tokenizer(vocabulary={"foo": 0, "bar": 1}, merges=["fo o"])
+        self.run_missing_special_tokens_test(
+            Llama3Tokenizer, vocabulary={"foo": 0, "bar": 1}, merges=["fo o"]
+        )
 
     @pytest.mark.extra_large
     def test_smallest_preset(self):

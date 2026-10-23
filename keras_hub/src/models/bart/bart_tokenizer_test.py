@@ -38,8 +38,9 @@ class BartTokenizerTest(TestCase):
         )
 
     def test_errors_missing_special_tokens(self):
-        with self.assertRaises(ValueError):
-            BartTokenizer(vocabulary=["a", "b", "c"], merges=[])
+        self.run_missing_special_tokens_test(
+            BartTokenizer, vocabulary=["a", "b", "c"], merges=[]
+        )
 
     @pytest.mark.extra_large
     def test_smallest_preset(self):

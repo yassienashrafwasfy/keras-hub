@@ -23,13 +23,13 @@ class T5TokenizerTest(TestCase):
         )
 
     def test_errors_missing_special_tokens(self):
-        with self.assertRaises(ValueError):
-            T5Tokenizer(
-                # Generated using create_no_special_token_proto.py
-                proto=os.path.join(
-                    self.get_test_data_dir(), "no_special_token_vocab.spm"
-                )
-            )
+        self.run_missing_special_tokens_test(
+            T5Tokenizer,
+            # Generated using create_no_special_token_proto.py
+            proto=os.path.join(
+                self.get_test_data_dir(), "no_special_token_vocab.spm"
+            ),
+        )
 
     @pytest.mark.extra_large
     def test_smallest_preset(self):

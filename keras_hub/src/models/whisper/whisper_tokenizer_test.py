@@ -63,10 +63,12 @@ class WhisperTokenizerTest(TestCase):
         self.assertEqual(tokenizer.translate_token_id, 35)
 
     def test_errors_missing_special_tokens(self):
-        with self.assertRaises(ValueError):
-            WhisperTokenizer(
-                vocabulary=["a", "b", "c"], merges=[], special_tokens={}
-            )
+        self.run_missing_special_tokens_test(
+            WhisperTokenizer,
+            vocabulary=["a", "b", "c"],
+            merges=[],
+            special_tokens={},
+        )
 
     @pytest.mark.extra_large
     def test_smallest_preset(self):

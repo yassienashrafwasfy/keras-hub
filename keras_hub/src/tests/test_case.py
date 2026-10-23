@@ -391,6 +391,18 @@ class TestCase(tf.test.TestCase, parameterized.TestCase):
         assert_grain_safe_types(grain_output)
         self.assertAllClose(expected_output, grain_output)
 
+    def run_missing_special_tokens_test(self, cls, **init_kwargs):
+        """Check a tokenizer built without its special tokens errors."""
+        with self.assertRaises(ValueError):
+            cls(**init_kwargs)
+
+    def run_ambiguous_input_test(self, cls, init_kwargs):
+        """Check a preprocessor rejects a 2D list of strings."""
+        preprocessor = cls(**init_kwargs)
+        ambiguous_input = [["one", "two"], ["three", "four"]]
+        with self.assertRaises(ValueError):
+            preprocessor(ambiguous_input)
+
     def run_preprocessor_test(
         self,
         cls,

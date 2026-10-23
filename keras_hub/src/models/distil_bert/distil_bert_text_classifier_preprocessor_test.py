@@ -41,10 +41,10 @@ class DistilBertTextClassifierPreprocessorTest(TestCase):
         )
 
     def test_errors_for_2d_list_input(self):
-        preprocessor = DistilBertTextClassifierPreprocessor(**self.init_kwargs)
-        ambiguous_input = [["one", "two"], ["three", "four"]]
-        with self.assertRaises(ValueError):
-            preprocessor(ambiguous_input)
+        self.run_ambiguous_input_test(
+            cls=DistilBertTextClassifierPreprocessor,
+            init_kwargs=self.init_kwargs,
+        )
 
     @pytest.mark.extra_large
     def test_all_presets(self):

@@ -36,5 +36,6 @@ class GPTNeoXTokenizerTest(TestCase):
         )
 
     def test_errors_missing_special_tokens(self):
-        with self.assertRaises(ValueError):
-            GPTNeoXTokenizer(vocabulary=["a", "b", "c"], merges=[])
+        self.run_missing_special_tokens_test(
+            GPTNeoXTokenizer, vocabulary=["a", "b", "c"], merges=[]
+        )

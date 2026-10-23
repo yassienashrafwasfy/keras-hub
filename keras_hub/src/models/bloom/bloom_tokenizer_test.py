@@ -38,8 +38,9 @@ class BloomTokenizerTest(TestCase):
         )
 
     def test_errors_missing_special_tokens(self):
-        with self.assertRaises(ValueError):
-            BloomTokenizer(vocabulary=["a", "b", "c"], merges=[])
+        self.run_missing_special_tokens_test(
+            BloomTokenizer, vocabulary=["a", "b", "c"], merges=[]
+        )
 
     @pytest.mark.large
     def test_smallest_preset(self):

@@ -23,10 +23,10 @@ class Gemma3nTokenizerTest(TestCase):
         )
 
     def test_errors_missing_special_tokens(self):
-        with self.assertRaises(ValueError):
-            Gemma3nTokenizer(
-                # Generated using `create_no_special_token_proto.py`
-                proto=os.path.join(
-                    self.get_test_data_dir(), "no_special_token_vocab.spm"
-                )
-            )
+        self.run_missing_special_tokens_test(
+            Gemma3nTokenizer,
+            # Generated using `create_no_special_token_proto.py`
+            proto=os.path.join(
+                self.get_test_data_dir(), "no_special_token_vocab.spm"
+            ),
+        )
