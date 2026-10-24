@@ -29,6 +29,7 @@ from PIL import Image
 from transformers import AutoModelForImageTextToText
 from transformers import AutoProcessor
 from transformers import AutoTokenizer
+from transformers.video_utils import VideoMetadata
 
 import keras_hub
 
@@ -61,9 +62,8 @@ IMAGE_PROMPT = (
     "<|im_start|>user\n<|vision_start|><|image_pad|><|vision_end|>"
     "Describe this image.<|im_end|>\n<|im_start|>assistant\n"
 )
-ATOL = 1e-3
-# Per-component relative tolerance, used to flag components in the report.
-COMPONENT_RTOL = 1e-3
+# Relative to the largest reference value, so it holds for any logit scale.
+RTOL = 1e-3
 
 FLAGS = flags.FLAGS
 flags.DEFINE_string(
@@ -122,11 +122,13 @@ def hf_forward(hf_model, **inputs):
     with torch.no_grad():
         logits = hf_model(**inputs).logits
         components = {}
+        pixel_values = None
         for pixels, grid in (
             ("pixel_values", "image_grid_thw"),
             ("pixel_values_videos", "video_grid_thw"),
         ):
             if pixels in inputs:
+                pixel_values = inputs[pixels].float().numpy()
                 vision = hf_model.model.visual(
                     inputs[pixels], grid_thw=inputs[grid]
                 )
@@ -141,6 +143,7 @@ def hf_forward(hf_model, **inputs):
         "input_ids": inputs["input_ids"].numpy(),
         "logits": logits.float().numpy(),
         "components": components,
+        "pixel_values": pixel_values,
     }
 
 
@@ -175,7 +178,15 @@ def precompute_hf_outputs(hf_model, hf_tokenizer, hf_preset):
                 "<|im_start|>assistant\n"
             ],
             videos=[frames],
-            fps=VIDEO_FPS,
+            video_metadata=[
+                VideoMetadata(
+                    total_num_frames=len(frames),
+                    fps=VIDEO_FPS,
+                    duration=len(frames) / VIDEO_FPS,
+                    frames_indices=list(range(len(frames))),
+                )
+            ],
+            do_sample_frames=False,
         ),
         "raw_image": image,
         "raw_frames": np.stack([np.array(f) for f in frames]),
@@ -193,6 +204,34 @@ def precompute_hf_outputs(hf_model, hf_tokenizer, hf_preset):
     return results
 
 
+def parity(value, expected):
+    """Return max abs, mean abs, relative max diff and cosine of two arrays."""
+    value = value.reshape(expected.shape).astype(np.float64)
+    expected = expected.astype(np.float64)
+    diff = np.abs(value - expected)
+    cosine = (value.ravel() @ expected.ravel()) / (
+        np.linalg.norm(value) * np.linalg.norm(expected) + 1e-30
+    )
+    rel = diff.max() / max(np.abs(expected).max(), 1e-12)
+    return diff.max(), diff.mean(), rel, cosine
+
+
+ROW_HEADER = (
+    f"    {'component':20s} {'max abs':>10s} {'mean abs':>10s} "
+    f"{'rel max':>10s} {'cosine':>10s}"
+)
+
+
+def print_row(name, value, expected):
+    max_abs, mean_abs, rel, cosine = parity(value, expected)
+    flag = "  HIGH" if rel > RTOL else ""
+    print(
+        f"    {name:20s} {max_abs:10.2e} {mean_abs:10.2e} "
+        f"{rel:10.2e} {cosine:10.6f}{flag}"
+    )
+    return rel
+
+
 def compare_logits(name, keras_model, preprocessed, hf_logits):
     backbone = keras_model.backbone
     inputs = {
@@ -203,11 +242,12 @@ def compare_logits(name, keras_model, preprocessed, hf_logits):
     hidden = backbone(inputs)
     logits = backbone.token_embedding(hidden, reverse=True)
     logits = ops.convert_to_numpy(logits).astype(np.float32)
-    diff = np.abs(logits - hf_logits)
+    max_abs, mean_abs, rel, _ = parity(logits, hf_logits)
     print(
-        f"  {name}: logit max abs diff {diff.max():.6f}, mean {diff.mean():.6f}"
+        f"  {name}: logit max abs diff {max_abs:.6f}, mean {mean_abs:.6f}, "
+        f"relative max {rel:.2e}"
     )
-    return float(diff.max())
+    return rel
 
 
 def compare_components(name, keras_model, preprocessed, hf_components):
@@ -244,25 +284,53 @@ def compare_components(name, keras_model, preprocessed, hf_components):
                 np.float32
             )
 
-    print(
-        f"  {name} components (relative max diff, flag above {COMPONENT_RTOL}):"
-    )
-    print(
-        f"    {'component':14s} {'max abs':>10s} {'mean abs':>10s} "
-        f"{'rel max':>10s} {'cosine':>10s}"
-    )
+    print(f"  {name} components (flag above relative {RTOL}):")
+    print(ROW_HEADER)
     for component, expected in hf_components.items():
-        value = got[component].reshape(expected.shape).astype(np.float64)
-        expected = expected.astype(np.float64)
-        diff = np.abs(value - expected)
-        rel = diff.max() / max(np.abs(expected).max(), 1e-12)
-        cosine = (value.ravel() @ expected.ravel()) / (
-            np.linalg.norm(value) * np.linalg.norm(expected) + 1e-30
+        print_row(component, got[component], expected)
+
+
+def compare_vision_inputs(name, keras_model, preprocessed, hf_reference):
+    """Separate the preprocessing from the vision tower.
+
+    Compares the pixels both preprocessors produce, then feeds the HF
+    pixels to the KerasHub vision tower.
+    """
+    vision_encoder = keras_model.backbone.vision_encoder
+    # HF packs (patches, C * T * P * P), channel first. KerasHub wants
+    # (patches, T, P, P, C).
+    hf_as_keras = (
+        hf_reference["pixel_values"]
+        .reshape(
+            -1,
+            vision_encoder.in_channels,
+            vision_encoder.temporal_patch_size,
+            vision_encoder.patch_size,
+            vision_encoder.patch_size,
         )
-        flag = "  HIGH" if rel > COMPONENT_RTOL else ""
-        print(
-            f"    {component:14s} {diff.max():10.2e} {diff.mean():10.2e} "
-            f"{rel:10.2e} {cosine:10.6f}{flag}"
+        .transpose(0, 2, 3, 4, 1)
+    )
+    print(f"  {name} vision inputs:")
+    print(ROW_HEADER)
+    print_row(
+        "pixel_values",
+        ops.convert_to_numpy(preprocessed["pixel_values"]),
+        hf_as_keras,
+    )
+    features, *deepstack = vision_encoder(
+        {
+            "pixel_values": ops.convert_to_tensor(hf_as_keras[None]),
+            "image_grid_thw": ops.convert_to_tensor(
+                preprocessed["image_grid_thw"]
+            ),
+        }
+    )
+    for i, value in enumerate([features, *deepstack]):
+        component = "vision" if i == 0 else f"deepstack_{i - 1}"
+        print_row(
+            f"{component} (HF pixels)",
+            ops.convert_to_numpy(value),
+            hf_reference["components"][component],
         )
 
 
@@ -278,7 +346,7 @@ def verify(keras_model, hf_results, hf_param_count):
     print(f"  KerasHub {keras_params:,}  HF {hf_param_count:,}")
     assert keras_params == hf_param_count, "Parameter counts differ."
 
-    print("\nLOGITS")
+    print("\nLOGITS AND COMPONENTS")
     preprocessor = keras_model.preprocessor
     worst = {}
 
@@ -301,6 +369,7 @@ def verify(keras_model, hf_results, hf_param_count):
     check_token_ids(pre, ref["input_ids"])
     worst["image"] = compare_logits("image", keras_model, pre, ref["logits"])
     compare_components("image", keras_model, pre, ref["components"])
+    compare_vision_inputs("image", keras_model, pre, ref)
 
     ref = hf_results["video"]
     pre = preprocessor.generate_preprocess(
@@ -311,16 +380,18 @@ def verify(keras_model, hf_results, hf_param_count):
                 "<|im_start|>assistant\n"
             ],
             "videos": [hf_results["raw_frames"]],
+            "video_fps": [[VIDEO_FPS]],
         },
         sequence_length=ref["input_ids"].shape[1],
     )
     check_token_ids(pre, ref["input_ids"])
     worst["video"] = compare_logits("video", keras_model, pre, ref["logits"])
     compare_components("video", keras_model, pre, ref["components"])
+    compare_vision_inputs("video", keras_model, pre, ref)
 
     for name, value in worst.items():
-        status = "ok" if value <= ATOL else "ABOVE TOLERANCE"
-        print(f"  {name}: {status} (atol={ATOL})")
+        status = "ok" if value <= RTOL else "ABOVE TOLERANCE"
+        print(f"  {name}: {status} (relative max diff, rtol={RTOL})")
 
     if not FLAGS.skip_generation:
         print("\nTEXT GENERATION")
