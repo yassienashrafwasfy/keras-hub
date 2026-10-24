@@ -18,6 +18,7 @@ from io import BytesIO
 os.environ["KERAS_BACKEND"] = "torch"
 os.environ.setdefault("CUDA_VISIBLE_DEVICES", "-1")
 
+import keras
 import numpy as np
 import requests
 import torch
@@ -61,6 +62,8 @@ IMAGE_PROMPT = (
     "Describe this image.<|im_end|>\n<|im_start|>assistant\n"
 )
 ATOL = 1e-3
+# Per-component relative tolerance, used to flag components in the report.
+COMPONENT_RTOL = 1e-3
 
 FLAGS = flags.FLAGS
 flags.DEFINE_string(
@@ -103,21 +106,52 @@ def load_video_frames():
     return [Image.fromarray(video[i]) for i in indices]
 
 
-def hf_text_reference(hf_model, hf_tokenizer):
-    ids = hf_tokenizer(TEXT_PROMPT, return_tensors="np")["input_ids"]
+def hf_forward(hf_model, **inputs):
+    """Run HF once and keep the logits and every intermediate output."""
+    layer_outputs = []
+    hooks = [
+        layer.register_forward_hook(
+            lambda module, args, output: layer_outputs.append(
+                (output[0] if isinstance(output, tuple) else output)
+                .float()
+                .numpy()
+            )
+        )
+        for layer in hf_model.model.language_model.layers
+    ]
     with torch.no_grad():
-        logits = hf_model(input_ids=torch.tensor(ids)).logits
-    return {"input_ids": ids, "logits": logits.float().numpy()}
+        logits = hf_model(**inputs).logits
+        components = {}
+        for pixels, grid in (
+            ("pixel_values", "image_grid_thw"),
+            ("pixel_values_videos", "video_grid_thw"),
+        ):
+            if pixels in inputs:
+                vision = hf_model.model.visual(
+                    inputs[pixels], grid_thw=inputs[grid]
+                )
+                components["vision"] = vision.pooler_output.float().numpy()
+                for i, feature in enumerate(vision.deepstack_features):
+                    components[f"deepstack_{i}"] = feature.float().numpy()
+    for hook in hooks:
+        hook.remove()
+    for i, output in enumerate(layer_outputs):
+        components[f"layer_{i}"] = output
+    return {
+        "input_ids": inputs["input_ids"].numpy(),
+        "logits": logits.float().numpy(),
+        "components": components,
+    }
+
+
+def hf_text_reference(hf_model, hf_tokenizer):
+    ids = hf_tokenizer(TEXT_PROMPT, return_tensors="pt")["input_ids"]
+    return hf_forward(hf_model, input_ids=ids)
 
 
 def hf_media_reference(hf_model, processor, **processor_kwargs):
     inputs = processor(return_tensors="pt", **processor_kwargs)
-    with torch.no_grad():
-        logits = hf_model(**inputs).logits
-    return {
-        "input_ids": inputs["input_ids"].numpy(),
-        "logits": logits.float().numpy(),
-    }
+    return hf_forward(hf_model, **inputs)
 
 
 def precompute_hf_outputs(hf_model, hf_tokenizer, hf_preset):
@@ -176,6 +210,62 @@ def compare_logits(name, keras_model, preprocessed, hf_logits):
     return float(diff.max())
 
 
+def compare_components(name, keras_model, preprocessed, hf_components):
+    """Print the parity of the vision tower and of every decoder layer."""
+    backbone = keras_model.backbone
+    feed = {
+        k: ops.convert_to_tensor(v)
+        for k, v in preprocessed.items()
+        if k in backbone.input
+    }
+    layers = [
+        backbone.get_layer(f"transformer_layer_{i}").output
+        for i in range(backbone.num_layers)
+    ]
+    probe = keras.Model(backbone.inputs, layers)
+    for tensor in probe.inputs:  # a text prompt leaves the vision inputs out
+        if tensor.name not in feed:
+            shape = [0 if d is None else d for d in tensor.shape]
+            feed[tensor.name] = ops.zeros(shape, dtype=tensor.dtype)
+    got = {
+        f"layer_{i}": ops.convert_to_numpy(output).astype(np.float32)
+        for i, output in enumerate(probe(feed))
+    }
+    if feed["pixel_values"].shape[1] > 0:
+        features, *deepstack = backbone.vision_encoder(
+            {
+                "pixel_values": feed["pixel_values"],
+                "image_grid_thw": feed["image_grid_thw"],
+            }
+        )
+        got["vision"] = ops.convert_to_numpy(features).astype(np.float32)
+        for i, feature in enumerate(deepstack):
+            got[f"deepstack_{i}"] = ops.convert_to_numpy(feature).astype(
+                np.float32
+            )
+
+    print(
+        f"  {name} components (relative max diff, flag above {COMPONENT_RTOL}):"
+    )
+    print(
+        f"    {'component':14s} {'max abs':>10s} {'mean abs':>10s} "
+        f"{'rel max':>10s} {'cosine':>10s}"
+    )
+    for component, expected in hf_components.items():
+        value = got[component].reshape(expected.shape).astype(np.float64)
+        expected = expected.astype(np.float64)
+        diff = np.abs(value - expected)
+        rel = diff.max() / max(np.abs(expected).max(), 1e-12)
+        cosine = (value.ravel() @ expected.ravel()) / (
+            np.linalg.norm(value) * np.linalg.norm(expected) + 1e-30
+        )
+        flag = "  HIGH" if rel > COMPONENT_RTOL else ""
+        print(
+            f"    {component:14s} {diff.max():10.2e} {diff.mean():10.2e} "
+            f"{rel:10.2e} {cosine:10.6f}{flag}"
+        )
+
+
 def check_token_ids(preprocessed, hf_ids):
     mask = ops.convert_to_numpy(preprocessed["padding_mask"]).astype(bool)
     ids = ops.convert_to_numpy(preprocessed["token_ids"])[mask]
@@ -198,6 +288,7 @@ def verify(keras_model, hf_results, hf_param_count):
     )
     check_token_ids(pre, ref["input_ids"])
     worst["text"] = compare_logits("text", keras_model, pre, ref["logits"])
+    compare_components("text", keras_model, pre, ref["components"])
 
     ref = hf_results["image"]
     pre = preprocessor.generate_preprocess(
@@ -209,6 +300,7 @@ def verify(keras_model, hf_results, hf_param_count):
     )
     check_token_ids(pre, ref["input_ids"])
     worst["image"] = compare_logits("image", keras_model, pre, ref["logits"])
+    compare_components("image", keras_model, pre, ref["components"])
 
     ref = hf_results["video"]
     pre = preprocessor.generate_preprocess(
@@ -224,6 +316,7 @@ def verify(keras_model, hf_results, hf_param_count):
     )
     check_token_ids(pre, ref["input_ids"])
     worst["video"] = compare_logits("video", keras_model, pre, ref["logits"])
+    compare_components("video", keras_model, pre, ref["components"])
 
     for name, value in worst.items():
         status = "ok" if value <= ATOL else "ABOVE TOLERANCE"
