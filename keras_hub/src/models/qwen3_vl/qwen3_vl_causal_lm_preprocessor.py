@@ -20,6 +20,7 @@ from keras_hub.src.utils.tensor_utils import (
 )
 from keras_hub.src.utils.tensor_utils import convert_to_list
 from keras_hub.src.utils.tensor_utils import convert_to_numpy
+from keras_hub.src.utils.tensor_utils import no_convert_scope
 from keras_hub.src.utils.tensor_utils import tensor_to_list
 from keras_hub.src.utils.tensor_utils import tf
 
@@ -152,7 +153,8 @@ class Qwen3_VLCausalLMPreprocessor(CausalLMPreprocessor):
         sequence_length)` and `"position_ids"` of shape `(batch,
         sequence_length, 3)`. When the input has media, the dict also holds
         `"pixel_values"` `(batch, num_patches, temporal_patch_size,
-        patch_size, patch_size, 3)`, `"image_grid_thw"` `(batch, num_items,
+        patch_size, patch_size, 3)`, with a time axis of `1` when the batch
+        has no video, `"image_grid_thw"` `(batch, num_items,
         3)` with images and videos in prompt order, and `"vision_indices"`
         `(batch, num_vision_tokens)`. The vision indices are positions in the
         flattened `(batch * sequence_length)` token axis. Samples with fewer
@@ -437,7 +439,7 @@ class Qwen3_VLCausalLMPreprocessor(CausalLMPreprocessor):
             for i in range(0, len(seconds), size)
         ]
 
-    def _expand_sample(self, prompt, images, videos, fps):
+    def _expand_sample(self, prompt, images, videos, fps, repeat_frames):
         """Expand the markers of one prompt and process its media.
 
         Returns:
@@ -460,8 +462,9 @@ class Qwen3_VLCausalLMPreprocessor(CausalLMPreprocessor):
                         "The prompt has more image markers than images, or "
                         "images were passed without an `image_converter`."
                     )
-                out = self.image_converter(images.pop(0))
-                grid = convert_to_list(out["grid_thw"])
+                image = images.pop(0)
+                out = self.image_converter(image, repeat_frames=repeat_frames)
+                grid = self.image_converter._grid_thw(*image.shape[:2])
                 sample["images"].append(grid)
                 text = tok.image_token * (math.prod(grid) // merge**2)
             else:
@@ -477,7 +480,9 @@ class Qwen3_VLCausalLMPreprocessor(CausalLMPreprocessor):
                     )
                 )
                 out = self.video_converter(video[indices])
-                grid = convert_to_list(out["grid_thw"])
+                grid = self.video_converter._grid_thw(
+                    len(indices), *video.shape[1:3]
+                )
                 count = grid[1] * grid[2] // merge**2
                 text = ""
                 for seconds in self._timestamps(indices, video_fps):
@@ -500,22 +505,39 @@ class Qwen3_VLCausalLMPreprocessor(CausalLMPreprocessor):
         prompts, images, videos, fps, batched = self._split_media(x)
         if not prompts:
             raise ValueError("`prompts` must not be empty.")
+        # Images without video keep one frame per patch and the vision
+        # encoder repeats it on the device. A batch with video needs the
+        # repeated frames to share one tensor with it, and a batch without
+        # media keeps the shape of `_empty_vision_inputs`.
+        repeat_frames = any(videos) or not any(images)
         expanded, samples = zip(
             *[
-                self._expand_sample(*args)
+                self._expand_sample(*args, repeat_frames)
                 for args in zip(prompts, images, videos, fps)
             ]
         )
         if not self.built:
             self.build(None)
-        token_ids, padding_mask = self.packer(
-            self.tokenizer(list(expanded)),
-            sequence_length=sequence_length + int(training),
-            add_start_value=self.add_start_token,
-            add_end_value=training and self.add_end_token,
-        )
-        token_ids = convert_to_list(token_ids)
-        padding_mask = convert_to_list(padding_mask)
+
+        def pack(prompts):
+            return self.packer(
+                self.tokenizer(prompts),
+                sequence_length=sequence_length + int(training),
+                add_start_value=self.add_start_token,
+                add_end_value=training and self.add_end_token,
+            )
+
+        if tf is None:
+            token_ids, padding_mask = pack(list(expanded))
+            token_ids = convert_to_list(token_ids)
+            padding_mask = convert_to_list(padding_mask)
+        else:
+            # Stay in TensorFlow on the host. Backend tensors would upload
+            # the ids only for them to be read straight back.
+            with tf.device("cpu"), no_convert_scope():
+                token_ids, padding_mask = pack(tf.constant(list(expanded)))
+            token_ids = tensor_to_list(token_ids)
+            padding_mask = tensor_to_list(padding_mask)
         batch_size, total = len(samples), len(token_ids[0])
 
         # The model sees the first `sequence_length` tokens. Training labels
@@ -552,21 +574,21 @@ class Qwen3_VLCausalLMPreprocessor(CausalLMPreprocessor):
 
         converter = self.image_converter or self.video_converter
         patch_shape = (
-            converter.temporal_patch_size,
+            converter.temporal_patch_size if repeat_frames else 1,
             converter.patch_size,
             converter.patch_size,
             3,
         )
         num_patches = max(sum(len(p) for p in s["patches"]) for s in samples)
         max_items = max(len(s["grids"]) for s in samples)
-        pixel_values, grids = [], []
+        # The patches of every sample and their zero padding are joined in
+        # one concatenate, so the pixels are copied once.
+        pieces, grids = [], []
         for sample in samples:
-            if sample["patches"]:
-                patches = ops.concatenate(sample["patches"])
-            else:
-                patches = ops.zeros((0,) + patch_shape)
-            padding = [(0, num_patches - len(patches))] + [(0, 0)] * 4
-            pixel_values.append(ops.pad(ops.cast(patches, "float32"), padding))
+            pieces += [ops.cast(p, "float32") for p in sample["patches"]]
+            missing = num_patches - sum(len(p) for p in sample["patches"])
+            if missing:
+                pieces.append(ops.zeros((missing,) + patch_shape))
             grids.append(
                 sample["grids"]
                 + [[0, 0, 0]] * (max_items - len(sample["grids"]))
@@ -585,7 +607,12 @@ class Qwen3_VLCausalLMPreprocessor(CausalLMPreprocessor):
             "position_ids": to_tensor(
                 [r[:sequence_length] for r in position_ids], "int32"
             ),
-            "pixel_values": ops.stack(pixel_values),
+            "pixel_values": ops.reshape(
+                ops.concatenate(pieces)
+                if pieces
+                else ops.zeros((0,) + patch_shape),
+                (batch_size, num_patches) + patch_shape,
+            ),
             "image_grid_thw": ops.reshape(
                 to_tensor(grids, "int32"), (batch_size, max_items, 3)
             ),

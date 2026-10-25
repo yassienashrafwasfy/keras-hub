@@ -1,3 +1,4 @@
+import functools
 import math
 
 import keras
@@ -8,15 +9,21 @@ from keras_hub.src.utils.keras_utils import clone_initializer
 from keras_hub.src.utils.keras_utils import fused_attention_op_available
 
 
-def _interleave_selector(mrope_section):
-    # One-hot (3, half_dim) choosing T, H or W for each frequency index.
+@functools.lru_cache(maxsize=None)
+def _interleave_channels(mrope_section):
+    # One-hot (3, half_dim) choosing T, H or W for each frequency index. It
+    # is cached as plain Python floats, which are safe to share across traces.
     half_dim = sum(mrope_section)
     channel = [0] * half_dim
     for dim in (1, 2):
         for index in range(dim, min(mrope_section[dim] * 3, half_dim), 3):
             channel[index] = dim
-    channel = ops.convert_to_tensor(channel, dtype="int32")
-    return ops.transpose(ops.one_hot(channel, 3, dtype="float32"))
+    return tuple(tuple(float(c == dim) for c in channel) for dim in range(3))
+
+
+def _interleave_selector(mrope_section):
+    channels = _interleave_channels(tuple(mrope_section))
+    return ops.convert_to_tensor(channels, dtype="float32")
 
 
 def compute_mrope_embeddings(

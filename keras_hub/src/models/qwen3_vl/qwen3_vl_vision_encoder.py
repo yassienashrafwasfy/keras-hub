@@ -50,11 +50,14 @@ class Qwen3_VLVisionAttention(keras.layers.Layer):
         # x: (batch, seq, heads, head_dim); cos/sin: (batch, seq, head_dim).
         cos = ops.expand_dims(cos, axis=2)
         sin = ops.expand_dims(sin, axis=2)
+        # Rotate in float32 as HF does, whatever the compute dtype.
+        dtype = x.dtype
+        x = ops.cast(x, "float32")
         half = self.head_dim // 2
         rotated = ops.concatenate([-x[..., half:], x[..., :half]], axis=-1)
-        return x * cos + rotated * sin
+        return ops.cast(x * cos + rotated * sin, dtype)
 
-    def call(self, x, cos, sin, frame_id):
+    def call(self, x, cos, sin, frame_id, frame_mask=None):
         """Run attention.
 
         Args:
@@ -63,6 +66,9 @@ class Qwen3_VLVisionAttention(keras.layers.Layer):
             sin: Tensor `(batch, seq, head_dim)`.
             frame_id: Int tensor `(batch, seq)`. A patch attends to the
                 patches that share its frame id.
+            frame_mask: Optional bool tensor `(batch, 1, seq, seq)` from
+                `Qwen3_VLVisionFrameMask`. When it is empty, the mask is
+                built from `frame_id` one query chunk at a time.
         """
         shape = ops.shape(x)
         qkv = ops.reshape(
@@ -75,6 +81,13 @@ class Qwen3_VLVisionAttention(keras.layers.Layer):
         # go through in chunks so a long batch of frames does not need a dense
         # square mask. Lengths that are not known statically use one chunk.
         seq_len = shape[1]
+        scale = 1.0 / math.sqrt(self.head_dim)
+        if frame_mask is not None and frame_mask.shape[-1] != 0:
+            out = ops.dot_product_attention(
+                q, k, v, mask=frame_mask, scale=scale
+            )
+            out = ops.reshape(out, (shape[0], shape[1], self.hidden_size))
+            return self.proj(out)
         if isinstance(seq_len, int) and seq_len > _QUERY_CHUNK:
             bounds = [
                 (start, min(start + _QUERY_CHUNK, seq_len))
@@ -91,14 +104,14 @@ class Qwen3_VLVisionAttention(keras.layers.Layer):
                     k,
                     v,
                     mask=ops.expand_dims(mask, axis=1),
-                    scale=1.0 / math.sqrt(self.head_dim),
+                    scale=scale,
                 )
             )
         out = outputs[0] if len(outputs) == 1 else ops.concatenate(outputs, 1)
         out = ops.reshape(out, (shape[0], shape[1], self.hidden_size))
         return self.proj(out)
 
-    def compute_output_spec(self, x, cos, sin, frame_id):
+    def compute_output_spec(self, x, cos, sin, frame_id, frame_mask=None):
         # Attention keeps the shape of the hidden states, so skip tracing the
         # chunked loop symbolically.
         return keras.KerasTensor(
@@ -115,6 +128,34 @@ class Qwen3_VLVisionAttention(keras.layers.Layer):
             }
         )
         return config
+
+
+class Qwen3_VLVisionFrameMask(keras.layers.Layer):
+    """The frame mask, built once and shared by every vision block.
+
+    A sequence longer than one query chunk gets an empty mask instead, so the
+    dense `(seq, seq)` mask is never held for long videos. The blocks then
+    build it one chunk at a time.
+
+    Call arguments:
+        frame_id: Int tensor `(batch, seq)`.
+
+    Returns:
+        A bool tensor `(batch, 1, seq, seq)`, or `(batch, 1, 0, 0)` when the
+        sequence is longer than one chunk or its length is not static.
+    """
+
+    def call(self, frame_id):
+        seq_len = ops.shape(frame_id)[1]
+        if isinstance(seq_len, int) and seq_len <= _QUERY_CHUNK:
+            mask = frame_id[:, :, None] == frame_id[:, None, :]
+            return ops.expand_dims(mask, axis=1)
+        return ops.zeros((ops.shape(frame_id)[0], 1, 0, 0), dtype="bool")
+
+    def compute_output_spec(self, frame_id):
+        return keras.KerasTensor(
+            (frame_id.shape[0], 1, None, None), dtype="bool"
+        )
 
 
 class Qwen3_VLVisionBlock(keras.layers.Layer):
@@ -163,8 +204,8 @@ class Qwen3_VLVisionBlock(keras.layers.Layer):
         self.mlp.build(input_shape)
         self.built = True
 
-    def call(self, x, cos, sin, frame_id):
-        x = x + self.attn(self.norm1(x), cos, sin, frame_id)
+    def call(self, x, cos, sin, frame_id, frame_mask=None):
+        x = x + self.attn(self.norm1(x), cos, sin, frame_id, frame_mask)
         return x + self.mlp(self.norm2(x))
 
     def get_config(self):
@@ -364,7 +405,7 @@ class Qwen3_VLVisionPatchEmbedding(Qwen3_5VisionPatchEmbed):
     """
 
     def call(self, pixel_values):
-        pixel_values = ops.cast(pixel_values, "float32")
+        pixel_values = ops.cast(pixel_values, self.compute_dtype)
         shape = ops.shape(pixel_values)
         patch_shape = (
             self.temporal_patch_size,
@@ -372,17 +413,25 @@ class Qwen3_VLVisionPatchEmbedding(Qwen3_5VisionPatchEmbed):
             self.patch_size,
             self.in_channels,
         )
+        # Still images may come with one frame per patch. They are repeated
+        # here, on the device, rather than in preprocessing.
+        pixel_values = ops.broadcast_to(
+            pixel_values, (shape[0], shape[1]) + patch_shape
+        )
         x = ops.reshape(pixel_values, (-1,) + patch_shape)
-        # Conv3D on an empty batch returns a wrong shape on TensorFlow, so a
-        # zero row is appended and dropped again.
-        x = ops.concatenate([x, ops.zeros((1,) + patch_shape, x.dtype)], axis=0)
-        x = super().call(x)[:-1]
+        if keras.config.backend() == "tensorflow":
+            # Conv3D on an empty batch returns a wrong shape on TensorFlow,
+            # so a zero row is appended and dropped again.
+            zero = ops.zeros((1,) + patch_shape, x.dtype)
+            x = super().call(ops.concatenate([x, zero], axis=0))[:-1]
+        else:
+            x = super().call(x)
         return ops.reshape(x, (shape[0], shape[1], self.hidden_size))
 
     def compute_output_spec(self, pixel_values):
         return keras.KerasTensor(
             shape=tuple(pixel_values.shape[:2]) + (self.hidden_size,),
-            dtype="float32",
+            dtype=self.compute_dtype,
         )
 
 
@@ -434,7 +483,7 @@ class Qwen3_VLVisionPositionEmbedding(keras.layers.Layer):
 
         def lookup(r, c, weight):
             rows = ops.take(self.embeddings, r * side + c, axis=0)
-            return rows * weight[..., None]
+            return rows * ops.cast(weight, rows.dtype)[..., None]
 
         return x + (
             lookup(row_lo, col_lo, (1 - row_frac) * (1 - col_frac))
@@ -499,7 +548,8 @@ class Qwen3_VLVisionEncoder(keras.Model):
     Patches must be in merge-window-major order: for each frame, the patches
     of every `spatial_merge_size x spatial_merge_size` window are consecutive.
 
-    The tower always runs in float32 regardless of `dtype`.
+    The tower runs in float32 unless `dtype` is passed. HF parity was
+    verified in float32.
 
     Args:
         depth: int. Number of transformer blocks.
@@ -520,15 +570,17 @@ class Qwen3_VLVisionEncoder(keras.Model):
             `(8, 16, 24)`.
         layer_norm_epsilon: float. Epsilon of all layer norms. Defaults to
             `1e-6`.
-        dtype: string or `keras.mixed_precision.DTypePolicy`. Ignored in favor
-            of float32.
+        dtype: string or `keras.mixed_precision.DTypePolicy`. The dtype of
+            the tower. Defaults to `None`, which means float32. The token
+            layout and the rotary tables stay in float32.
 
     This is a functional model, so `summary()` lists the layers and the
     parameter count.
 
     Call arguments:
         inputs: A dict with `"pixel_values"`, a tensor `(batch, num_patches,
-            temporal_patch_size, patch_size, patch_size, in_channels)`, and
+            temporal_patch_size, patch_size, patch_size, in_channels)`, where
+            a time axis of `1` is repeated to `temporal_patch_size`, and
             `"image_grid_thw"`, an int tensor `(batch, num_items, 3)` with
             `(t, h, w)` in patch units before merging. Rows of zeros are
             treated as padding.
@@ -569,18 +621,17 @@ class Qwen3_VLVisionEncoder(keras.Model):
                 "`num_position_embeddings` must be a perfect square. "
                 f"Received: {num_position_embeddings}"
             )
+        # Unlike other KerasHub models, `None` means float32 here rather than
+        # the global policy, so a model loaded in bfloat16 keeps a float32
+        # vision tower unless one is asked for.
+        if dtype is None:
+            dtype = "float32"
         deepstack_visual_indexes = tuple(deepstack_visual_indexes)
         head_dim = hidden_size // num_heads
 
         # === Functional Model ===
         pixel_values = keras.Input(
-            shape=(
-                None,
-                temporal_patch_size,
-                patch_size,
-                patch_size,
-                in_channels,
-            ),
+            shape=(None, None, patch_size, patch_size, in_channels),
             dtype="float32",
             name="pixel_values",
         )
@@ -595,15 +646,16 @@ class Qwen3_VLVisionEncoder(keras.Model):
             temporal_patch_size=temporal_patch_size,
             in_channels=in_channels,
             hidden_size=hidden_size,
-            dtype="float32",
+            dtype=dtype,
             name="patch_embed",
         )(pixel_values)
         x = Qwen3_VLVisionPositionEmbedding(
             num_position_embeddings,
             hidden_size,
-            dtype="float32",
+            dtype=dtype,
             name="pos_embed",
         )(x, row, col, h, w)
+        frame_mask = Qwen3_VLVisionFrameMask(name="frame_mask")(frame_id)
         cos, sin = Qwen3_VLVisionRotary(
             head_dim, dtype="float32", name="rotary"
         )(row, col)
@@ -614,9 +666,9 @@ class Qwen3_VLVisionEncoder(keras.Model):
                 num_heads=num_heads,
                 intermediate_size=intermediate_size,
                 layer_norm_epsilon=layer_norm_epsilon,
-                dtype="float32",
+                dtype=dtype,
                 name=f"blocks_{i}",
-            )(x, cos, sin, frame_id)
+            )(x, cos, sin, frame_id, frame_mask)
             if i in deepstack_visual_indexes:
                 position = deepstack_visual_indexes.index(i)
                 deepstack_features.append(
@@ -626,7 +678,7 @@ class Qwen3_VLVisionEncoder(keras.Model):
                         out_hidden_size=out_hidden_size,
                         postshuffle_norm=True,
                         layer_norm_epsilon=layer_norm_epsilon,
-                        dtype="float32",
+                        dtype=dtype,
                         name=f"deepstack_merger_list_{position}",
                     )(x)
                 )
@@ -636,14 +688,14 @@ class Qwen3_VLVisionEncoder(keras.Model):
             out_hidden_size=out_hidden_size,
             postshuffle_norm=False,
             layer_norm_epsilon=layer_norm_epsilon,
-            dtype="float32",
+            dtype=dtype,
             name="merger",
         )(x)
 
         super().__init__(
             inputs={"pixel_values": pixel_values, "image_grid_thw": grid_thw},
             outputs=[features] + deepstack_features,
-            dtype="float32",
+            dtype=dtype,
             **kwargs,
         )
 
@@ -662,6 +714,8 @@ class Qwen3_VLVisionEncoder(keras.Model):
         self.layer_norm_epsilon = layer_norm_epsilon
         self.head_dim = head_dim
         self.num_grid_per_side = num_grid_per_side
+        # A functional `keras.Model` ignores `dtype`, so keep it for the config.
+        self.tower_dtype = keras.dtype_policies.get(dtype)
 
     @property
     def patch_embed(self):
@@ -702,7 +756,7 @@ class Qwen3_VLVisionEncoder(keras.Model):
             "num_position_embeddings": self.num_position_embeddings,
             "deepstack_visual_indexes": list(self.deepstack_visual_indexes),
             "layer_norm_epsilon": self.layer_norm_epsilon,
-            "dtype": keras.dtype_policies.serialize(self.dtype_policy),
+            "dtype": keras.dtype_policies.serialize(self.tower_dtype),
         }
 
     @classmethod

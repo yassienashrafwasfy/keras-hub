@@ -468,9 +468,15 @@ def _validate_output(keras_lm, reference, hf_param_count):
         )
         _check_token_ids(preprocessed, ref["input_ids"])
         hf_pixels = _hf_pixels_as_keras(keras_lm, ref)
+        # Without video, KerasHub keeps one frame per patch and the vision
+        # encoder repeats it, so repeat it here to compare with HF.
+        keras_pixels = np.broadcast_to(
+            ops.convert_to_numpy(preprocessed["pixel_values"]),
+            (1,) + hf_pixels.shape,
+        )
         _report_diff(
             f"{kind} pixel_values (KerasHub vs HF preprocessing)",
-            ops.convert_to_numpy(preprocessed["pixel_values"]),
+            keras_pixels,
             hf_pixels,
             atol=_PIXEL_ATOL,
             rtol=0.0,

@@ -1,5 +1,6 @@
 import math
 
+import keras
 from keras import ops
 
 from keras_hub.src.api_export import keras_hub_export
@@ -46,6 +47,16 @@ def resize_integer_pixels_tf(x, height, width, method, antialias):
         return tf.round(tf.clip_by_value(x, 0.0, 255.0))
 
     return resize(resize(x, (tf.shape(x)[1], width)), (height, width))
+
+
+def eager_tf_preprocessing():
+    """Whether eager preprocessing runs through TensorFlow.
+
+    On JAX every new image or video shape compiles the resize again, which
+    costs hundreds of milliseconds per shape. TensorFlow runs eagerly without
+    compiling, and its `uint8` resize matches HF exactly.
+    """
+    return tf is not None and keras.config.backend() == "jax"
 
 
 def smart_resize_volume(
@@ -169,10 +180,16 @@ class Qwen3_VLImageConverter(ImageConverter):
 
     Call arguments:
         inputs: A `(height, width, 3)` image with values in `[0, 255]`.
+        repeat_frames: bool. Whether to repeat the image
+            `temporal_patch_size` times along the time axis, as HF does.
+            The vision encoder also accepts a single frame and repeats it on
+            the device. Defaults to `True`.
 
     Returns:
         A dict with `"patches"`, a float tensor of shape
-        `(num_patches, temporal_patch_size, patch_size, patch_size, 3)`, and
+        `(num_patches, temporal_patch_size, patch_size, patch_size, 3)`, or
+        `(num_patches, 1, patch_size, patch_size, 3)` without
+        `repeat_frames`, and
         `"grid_thw"`, the int32 vector `[1, height // patch_size,
         width // patch_size]`.
     """
@@ -209,15 +226,25 @@ class Qwen3_VLImageConverter(ImageConverter):
         self._factor = patch_size * spatial_merge_size
 
     @preprocessing_function
-    def call(self, inputs):
+    def call(self, inputs, repeat_frames=True):
         if in_tf_function():
-            return self._call_tf(inputs)
-        outputs = self._call_ops(inputs)
+            return self._call_tf(inputs, repeat_frames)
+        if eager_tf_preprocessing():
+            outputs = self._call_tf(tf.convert_to_tensor(inputs), repeat_frames)
+        else:
+            outputs = self._call_ops(inputs, repeat_frames)
         if in_grain_data_pipeline():
             # Grain pickles outputs across worker processes, so return NumPy
             # arrays rather than backend tensors.
             return convert_preprocessing_outputs_grain(outputs)
         return outputs
+
+    def _grid_thw(self, height, width):
+        """The `grid_thw` of an image, computed on the host."""
+        target_h, target_w = smart_resize(
+            height, width, self._factor, self.min_pixels, self.max_pixels
+        )
+        return [1, target_h // self.patch_size, target_w // self.patch_size]
 
     def _normalize(self, image):
         if self.scale is not None:
@@ -230,7 +257,7 @@ class Qwen3_VLImageConverter(ImageConverter):
             image = image + offset
         return image
 
-    def _call_tf(self, inputs):
+    def _call_tf(self, inputs, repeat_frames=True):
         image = tf.cast(inputs, "float32")
         target_h, target_w = _smart_resize_tf(
             tf.shape(image)[0],
@@ -261,11 +288,12 @@ class Qwen3_VLImageConverter(ImageConverter):
         image = tf.reshape(image, (grid_h // m, m, p, grid_w // m, m, p, 3))
         image = tf.transpose(image, (0, 3, 1, 4, 2, 5, 6))
         image = tf.reshape(image, (grid_h * grid_w, 1, p, p, 3))
-        image = tf.tile(image, [1, self.temporal_patch_size, 1, 1, 1])
+        if repeat_frames:
+            image = tf.tile(image, [1, self.temporal_patch_size, 1, 1, 1])
         grid_thw = tf.stack([tf.constant(1, "int32"), grid_h, grid_w])
         return {"patches": image, "grid_thw": grid_thw}
 
-    def _call_ops(self, inputs):
+    def _call_ops(self, inputs, repeat_frames=True):
         inputs = ops.convert_to_tensor(inputs)
         is_int = is_int_dtype(inputs.dtype)
         image = ops.cast(inputs, "float32")
@@ -292,7 +320,8 @@ class Qwen3_VLImageConverter(ImageConverter):
         image = ops.reshape(image, (grid_h // m, m, p, grid_w // m, m, p, 3))
         image = ops.transpose(image, (0, 3, 1, 4, 2, 5, 6))
         image = ops.reshape(image, (grid_h * grid_w, 1, p, p, 3))
-        image = ops.tile(image, [1, self.temporal_patch_size, 1, 1, 1])
+        if repeat_frames:
+            image = ops.tile(image, [1, self.temporal_patch_size, 1, 1, 1])
         grid_thw = ops.convert_to_tensor([1, grid_h, grid_w], dtype="int32")
         return {"patches": image, "grid_thw": grid_thw}
 

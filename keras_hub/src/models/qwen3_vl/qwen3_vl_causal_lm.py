@@ -9,6 +9,7 @@ from keras_hub.src.models.qwen3_vl.qwen3_vl_backbone import Qwen3_VLBackbone
 from keras_hub.src.models.qwen3_vl.qwen3_vl_causal_lm_preprocessor import (
     Qwen3_VLCausalLMPreprocessor,
 )
+from keras_hub.src.models.qwen3_vl.qwen3_vl_layers import _flatten_vision_inputs
 from keras_hub.src.utils.tensor_utils import any_equal
 
 
@@ -81,12 +82,21 @@ class Qwen3_VLCausalLM(CausalLM):
             text_embeddings=x,
             vision_indices=vision_indices,
         )
-        updates = [
-            self.backbone.deepstack_inject(
-                ops.zeros_like(embeddings), feature, vision_indices
+        # Scatter each feature straight into a dense update instead of
+        # adding it to a zero tensor.
+        shape = ops.shape(embeddings)
+        hidden_dim = self.backbone.hidden_dim
+        updates = []
+        for feature in deepstack_features:
+            rows, indices = _flatten_vision_inputs(
+                feature, vision_indices, hidden_dim
             )
-            for feature in deepstack_features
-        ]
+            update = ops.scatter(
+                indices,
+                ops.cast(rows, embeddings.dtype),
+                (shape[0] * shape[1], hidden_dim),
+            )
+            updates.append(ops.reshape(update, shape))
         return embeddings, updates
 
     def call_with_cache(
@@ -201,8 +211,12 @@ class Qwen3_VLCausalLM(CausalLM):
         img_embeddings = deepstack_features = None
         vision_indices = inputs.get("vision_indices", None)
         pixel_values = inputs.get("pixel_values", None)
-        if self.backbone.vision_encoder is not None and (
-            pixel_values is not None
+        # Text-only prompts carry zero patches. The shape is static while
+        # tracing, so the vision tower stays out of the graph for them.
+        if (
+            self.backbone.vision_encoder is not None
+            and pixel_values is not None
+            and pixel_values.shape[1] != 0
         ):
             img_embeddings, *deepstack_features = self.backbone.vision_encoder(
                 {
@@ -253,14 +267,29 @@ class Qwen3_VLCausalLM(CausalLM):
                 return tensor
             return ops.repeat(tensor, num_beams, axis=0)
 
+        # The steps only read these, so they are repeated for the beams once.
+        beam_positions = per_beam(position_table)
+        if img_embeddings is not None:
+            beam_prompt_mask = per_beam(ops.cast(padding_mask, "bool"))
+            # Vision indices point into the flattened batch, so the steps
+            # match against all of them at once.
+            flat_vision_indices = ops.reshape(
+                ops.cast(vision_indices, "int32"), (1, -1)
+            )
+            image_rows = ops.reshape(
+                img_embeddings, (-1, ops.shape(img_embeddings)[-1])
+            )
+            deepstack_rows = [
+                ops.reshape(f, (-1, ops.shape(f)[-1]))
+                for f in deepstack_features
+            ]
+
         def next(prompt, cache, index):
             cache_update_index = index - 1
             rows = ops.shape(prompt)[0]
             prompt = ops.slice(prompt, [0, cache_update_index], [rows, 1])
             step_positions = ops.slice(
-                per_beam(position_table),
-                [0, 0, cache_update_index],
-                [rows, 3, 1],
+                beam_positions, [0, 0, cache_update_index], [rows, 3, 1]
             )
             # The sampler re-feeds the slots of the longer prompts in a
             # batch. Those keep their vision features and DeepStack updates
@@ -270,38 +299,33 @@ class Qwen3_VLCausalLM(CausalLM):
             embeddings = updates = None
             if img_embeddings is not None:
                 slot_in_prompt = ops.slice(
-                    per_beam(ops.cast(padding_mask, "bool")),
-                    [0, cache_update_index],
-                    [rows, 1],
+                    beam_prompt_mask, [0, cache_update_index], [rows, 1]
                 )
                 row_ids = ops.arange(rows, dtype="int32") // num_beams
                 flat_slot = row_ids * max_length + cache_update_index
-                match = per_beam(ops.cast(vision_indices, "int32"))
-                match = ops.equal(match, flat_slot[:, None])
+                match = ops.equal(flat_vision_indices, flat_slot[:, None])
                 is_vision = ops.logical_and(
                     ops.any(match, axis=1, keepdims=True), slot_in_prompt
                 )[:, :, None]
-                weights = ops.cast(match, img_embeddings.dtype)[:, :, None]
+                # A slot in the prompt matches at most one vision token, so
+                # gather that row. Padded indices only point at padding
+                # slots, which `slot_in_prompt` masks out.
+                row = ops.argmax(match, axis=1)
 
-                def vision_feature(features):
-                    features = per_beam(features)
-                    feature = ops.sum(
-                        features * ops.cast(weights, features.dtype),
-                        axis=1,
-                        keepdims=True,
-                    )
+                def vision_feature(feature_rows):
+                    feature = ops.take(feature_rows, row, axis=0)[:, None, :]
                     # The vision encoder may run in a different dtype than
                     # the decoder, as when a preset is loaded in bfloat16.
                     return ops.cast(feature, self.compute_dtype)
 
                 embeddings = ops.where(
                     is_vision,
-                    vision_feature(img_embeddings),
+                    vision_feature(image_rows),
                     self.backbone.token_embedding(prompt),
                 )
                 updates = [
                     ops.where(is_vision, vision_feature(feature), 0.0)
-                    for feature in deepstack_features
+                    for feature in deepstack_rows
                 ]
             logits, hidden_states, cache = self.call_with_cache(
                 prompt,

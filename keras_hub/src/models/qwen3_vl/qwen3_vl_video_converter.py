@@ -4,6 +4,9 @@ from keras_hub.src.api_export import keras_hub_export
 from keras_hub.src.layers.preprocessing.video_converter import VideoConverter
 from keras_hub.src.models.qwen3_vl.qwen3_vl_backbone import Qwen3_VLBackbone
 from keras_hub.src.models.qwen3_vl.qwen3_vl_image_converter import (
+    eager_tf_preprocessing,
+)
+from keras_hub.src.models.qwen3_vl.qwen3_vl_image_converter import (
     resize_integer_pixels,
 )
 from keras_hub.src.models.qwen3_vl.qwen3_vl_image_converter import (
@@ -21,6 +24,10 @@ from keras_hub.src.utils.tensor_utils import in_tf_function
 from keras_hub.src.utils.tensor_utils import is_int_dtype
 from keras_hub.src.utils.tensor_utils import preprocessing_function
 from keras_hub.src.utils.tensor_utils import tf
+
+# Eager calls cast and resize this many frames at a time, so the float32
+# copy of a full-resolution video is never held whole.
+_FRAME_CHUNK = 16
 
 
 @keras_hub_export("keras_hub.layers.Qwen3_VLVideoConverter")
@@ -127,11 +134,28 @@ class Qwen3_VLVideoConverter(VideoConverter):
         indices = ops.linspace(0.0, total_frames - 1.0, num_frames)
         return ops.cast(ops.round(indices), "int32")
 
+    def _grid_thw(self, num_frames, height, width):
+        """The `grid_thw` of a sampled video, computed on the host."""
+        t, p = self.temporal_patch_size, self.patch_size
+        target_h, target_w = smart_resize(
+            num_frames,
+            height,
+            width,
+            t,
+            self._factor,
+            self.min_pixels,
+            self.max_pixels,
+        )
+        return [-(-num_frames // t), target_h // p, target_w // p]
+
     @preprocessing_function
     def call(self, inputs):
         if in_tf_function():
             return self._call_tf(inputs)
-        outputs = self._call_ops(inputs)
+        if eager_tf_preprocessing():
+            outputs = self._call_tf(tf.convert_to_tensor(inputs))
+        else:
+            outputs = self._call_ops(inputs)
         if in_grain_data_pipeline():
             # Grain pickles outputs across worker processes, so return NumPy
             # arrays rather than backend tensors.
@@ -146,27 +170,43 @@ class Qwen3_VLVideoConverter(VideoConverter):
         return video
 
     def _call_tf(self, inputs):
-        video = tf.cast(inputs, "float32")
-        frames = tf.shape(video)[0]
+        frames = tf.shape(inputs)[0]
         target_h, target_w = _smart_resize_tf(
             frames,
-            tf.shape(video)[1],
-            tf.shape(video)[2],
+            tf.shape(inputs)[1],
+            tf.shape(inputs)[2],
             self.temporal_patch_size,
             self._factor,
             self.min_pixels,
             self.max_pixels,
         )
-        if inputs.dtype.is_integer:
-            video = resize_integer_pixels_tf(
-                video, target_h, target_w, self.interpolation, self.antialias
-            )
-        else:
-            video = tf.image.resize(
+
+        def resize(video):
+            video = tf.cast(video, "float32")
+            if inputs.dtype.is_integer:
+                return resize_integer_pixels_tf(
+                    video,
+                    target_h,
+                    target_w,
+                    self.interpolation,
+                    self.antialias,
+                )
+            return tf.image.resize(
                 video,
                 (target_h, target_w),
                 method=self.interpolation,
                 antialias=self.antialias,
+            )
+
+        if in_tf_function():
+            video = resize(inputs)
+        else:
+            video = tf.concat(
+                [
+                    resize(inputs[i : i + _FRAME_CHUNK])
+                    for i in range(0, int(frames), _FRAME_CHUNK)
+                ],
+                axis=0,
             )
         video = self._normalize(
             tf.clip_by_value(video, 0.0, 255.0),
@@ -195,8 +235,7 @@ class Qwen3_VLVideoConverter(VideoConverter):
     def _call_ops(self, inputs):
         inputs = ops.convert_to_tensor(inputs)
         is_int = is_int_dtype(inputs.dtype)
-        video = ops.cast(inputs, "float32")
-        frames, height, width = (int(d) for d in ops.shape(video)[:3])
+        frames, height, width = (int(d) for d in ops.shape(inputs)[:3])
         t, p, m = (
             self.temporal_patch_size,
             self.patch_size,
@@ -211,17 +250,31 @@ class Qwen3_VLVideoConverter(VideoConverter):
             self.min_pixels,
             self.max_pixels,
         )
-        if is_int:
-            video = resize_integer_pixels(
-                video, target_h, target_w, self.interpolation, self.antialias
-            )
-        else:
-            video = ops.image.resize(
+
+        def resize(video):
+            video = ops.cast(video, "float32")
+            if is_int:
+                return resize_integer_pixels(
+                    video,
+                    target_h,
+                    target_w,
+                    self.interpolation,
+                    self.antialias,
+                )
+            return ops.image.resize(
                 video,
                 size=(target_h, target_w),
                 interpolation=self.interpolation,
                 antialias=self.antialias,
             )
+
+        video = ops.concatenate(
+            [
+                resize(inputs[i : i + _FRAME_CHUNK])
+                for i in range(0, frames, _FRAME_CHUNK)
+            ],
+            axis=0,
+        )
         video = self._normalize(
             ops.clip(video, 0.0, 255.0),
             lambda v: ops.reshape(

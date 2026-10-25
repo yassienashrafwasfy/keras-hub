@@ -267,7 +267,8 @@ class Qwen3_VLCausalLMPreprocessorTest(TestCase):
         start = int(np.flatnonzero(token_ids == image_id)[0])
         self.assertAllEqual(x["vision_indices"], np.arange(start, start + 4))
         self.assertAllEqual(x["image_grid_thw"], [[1, 4, 4]])
-        self.assertEqual(x["pixel_values"].shape, (16, 2, 2, 2, 3))
+        # Without video, the encoder repeats the single frame itself.
+        self.assertEqual(x["pixel_values"].shape, (16, 1, 2, 2, 3))
         positions = keras.ops.convert_to_numpy(x["position_ids"])
         # Text "air " is 4 tokens, so the image starts at position 5 (after
         # the vision start token) and spans max(2, 2) positions.
@@ -402,7 +403,8 @@ class Qwen3_VLCausalLMPreprocessorTest(TestCase):
             {"prompts": IMAGE_PROMPT, "images": self.image}
         )
         self.assertEqual(x["token_ids"].shape, (64,))
-        self.assertEqual(x["pixel_values"].shape, (16, 2, 2, 2, 3))
+        # Without video, the encoder repeats the single frame itself.
+        self.assertEqual(x["pixel_values"].shape, (16, 1, 2, 2, 3))
         self.assertEqual(x["image_grid_thw"].shape, (1, 3))
         self.assertEqual(x["vision_indices"].shape, (4,))
 

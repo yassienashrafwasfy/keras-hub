@@ -61,7 +61,7 @@ class Qwen3_VLBackbone(Backbone):
             height and width positions. Defaults to plain 1D positions.
         pixel_values: float tensor `(batch, num_patches, temporal_patch_size,
             patch_size, patch_size, in_channels)`. Images and videos share this
-            input.
+            input. A time axis of `1` is repeated to `temporal_patch_size`.
         image_grid_thw: int tensor `(batch, num_items, 3)`.
         vision_indices: int tensor `(batch, num_vision_tokens)`. Indices into
             the flattened `(batch * seq_len)` sequence of the vision tokens.
@@ -163,7 +163,7 @@ class Qwen3_VLBackbone(Backbone):
             pixel_values_input = keras.Input(
                 shape=(
                     None,
-                    vision_encoder.temporal_patch_size,
+                    None,
                     vision_encoder.patch_size,
                     vision_encoder.patch_size,
                     vision_encoder.in_channels,

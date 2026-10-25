@@ -119,6 +119,14 @@ class Qwen3_VLMultimodalBackboneTest(TestCase):
         out = ops.convert_to_numpy(model(other))
         self.assertGreater(np.abs(base - out).max(), 1e-6)
 
+    def test_single_frame_pixels_match_repeated_frames(self):
+        model = Qwen3_VLBackbone(**self.init_kwargs)
+        still = dict(self.input_data)
+        still["pixel_values"] = self.input_data["pixel_values"][:, :, :1]
+        repeated = dict(self.input_data)
+        repeated["pixel_values"] = np.repeat(still["pixel_values"], 2, axis=2)
+        self.assertAllClose(model(still), model(repeated))
+
     def test_deepstack_depends_on_vision_indices(self):
         model = Qwen3_VLBackbone(**self.init_kwargs)
         moved = dict(self.input_data)
